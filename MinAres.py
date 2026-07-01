@@ -27,8 +27,8 @@ def MinAres(
     using the MINARES algorithm.
 
     MINARES (Minimum A-Residual) is an iterative Krylov subspace method for
-    Hermitian linear systems. In each iteration, he method minimizes the norm
-    of the A-residual
+    Hermitian linear systems or least squares problems. In each iteration,
+    the method minimizes the norm of the A-residual
 
             ``||A r_k||_2``,
 
@@ -42,10 +42,9 @@ def MinAres(
     b : array_like
         Right-hand side vector of length ``n``.
     r_tol : float, optional
-        Relative stopping tolerance for the residual norm. Default is
-        ``1e-10``.
+        Stopping tolerance for the residual norm. Default is ``1e-10``.
     Ar_tol : float, optional
-        Relative stopping tolerance for the A-residual norm ``||A r_k||``.
+        Stopping tolerance for the A-residual norm ``||A r_k||``.
         Default is ``1e-10``.
     k_max : int, optional
         Maximum number of iterations. If ``None``, the default value is
@@ -80,11 +79,11 @@ def MinAres(
         * ``norm_Ar_k`` (float) is the final A-residual norm
           ``||A(b - A x_k)||_2``;
         * ``breakdown`` (str) describes the termination condition and is
-          one of:
-                  - ``"maximum number of iterations exceeded"``
-                  - ``"beta tolerance reached"``
-                  - ``"residual tolerance reached"``
-                  - ``"A-residual tolerance reached"``
+          one of:<br/>
+          ``"maximum number of iterations exceeded"``,<br/>
+          ``"beta tolerance reached"``,<br/>
+          ``"residual tolerance reached"``,<br/>
+          ``"A-residual tolerance reached"``.
 
     Notes
     -----
