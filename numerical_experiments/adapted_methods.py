@@ -1,0 +1,2572 @@
+import numpy as np
+from numpy.linalg import norm
+from MinAres import get_givens_rot
+
+
+def double_reorthogonalization(v, V):
+    """
+    Orthogonalize v against all columns of V.
+    """
+    n, k = V.shape
+    for _ in range(2):
+        for i in range(k):
+            v -= np.vdot(V[:, i], v) / np.real(np.vdot(V[:, i], V[:, i])) * V[:, i]
+    return v
+
+
+def MinAres_full_ortho(
+    A,
+    b,
+    r_tol=1e-10,
+    Ar_tol=1e-10,
+    k_max=None,
+    beta_tol=None,
+    *,
+    callback=None,
+    callback_args=(),
+    **callback_kwargs,
+):
+    """
+    This is an adaptaion of MinAres. Here, the Lanczos vectors are
+    computed with double full reorthorthogonalization.
+    """
+    n = A.shape[0]
+
+    if k_max is None:
+        k_max = 2 * n
+    if beta_tol is None:
+        beta_tol = max(r_tol, Ar_tol)
+
+    dtype = (
+        np.complex128
+        if A.dtype == np.complex128 or b.dtype == np.complex128
+        else np.float64
+    )
+
+    k = 0
+    l = np.inf
+    x_k = np.zeros(n, dtype=dtype)
+
+    V = np.zeros((n, k_max + 3), dtype=dtype)
+
+    # First two iterations of Lanczos
+    beta_1 = norm(b)
+    V[:, 0] = np.divide(
+        b, beta_1, dtype=dtype
+    )  # Cast into complex dtype if b is real, but A is not
+
+    V[:, 1] = A @ V[:, 0]
+    alpha_k_plus_1 = np.real(
+        np.vdot(V[:, 0], V[:, 1])
+    )  # In exact arithmetic, this should be real. We cast it into real dtype
+    V[:, 1] = double_reorthogonalization(V[:, 1], V[:, : k + 1])
+    beta_k_plus_2 = norm(V[:, 1])
+    V[:, 1] /= beta_k_plus_2
+    V[:, k + 1] = V[:, 1]
+
+    zeta_bar_bar_k_plus_1 = beta_1 * alpha_k_plus_1
+    zeta_bar_k_plus_2 = beta_1 * beta_k_plus_2
+    chi_bar_k_plus_1 = beta_1
+    lambda_bar_k_plus_1 = alpha_k_plus_1
+    gamma_bar_k_plus_1 = beta_k_plus_2
+
+    norm_r_k = chi_bar_k_plus_1
+    norm_Ar_k = norm((zeta_bar_bar_k_plus_1, zeta_bar_k_plus_2))
+
+    if callback is not None:
+        callback(x_k, k, norm_r_k, norm_Ar_k, *callback_args, **callback_kwargs)
+
+    c_tilde_2k_2 = (
+        c_tilde_2k_1
+    ) = c_tilde_2k = s_tilde_2k_2 = s_tilde_2k_1 = s_tilde_2k = None
+
+    while norm_r_k > r_tol and norm_Ar_k > Ar_tol and k <= k_max:
+        k += 1
+
+        c_tilde_2k_3, c_tilde_2k_1 = c_tilde_2k_1, None
+        c_tilde_2k_4, c_tilde_2k_2, c_tilde_2k = c_tilde_2k_2, c_tilde_2k, None
+        s_tilde_2k_3, s_tilde_2k_1 = s_tilde_2k_1, None
+        s_tilde_2k_4, s_tilde_2k_2, s_tilde_2k = s_tilde_2k_2, s_tilde_2k, None
+
+        # Update the QR factorization Tₖ₊₁.ₖ = Qₖ [ Rₖ ].
+        #                                         [ 0  ]
+        #
+        # [ α₁ β₂ 0  •  •  •   0  ]      [ λ₁ γ₁ ϵ₁ 0  •  •  0  ]
+        # [ β₂ α₂ β₃ •         •  ]      [ 0  λ₂ γ₂ •  •     •  ]
+        # [ 0  •  •  •  •      •  ]      [ •  •  λ₃ •  •  •  •  ]
+        # [ •  •  •  •  •  •   •  ] = Qₖ [ •     •  •  •  •  0  ]
+        # [ •     •  •  •  •   0  ]      [ •        •  •  • ϵₖ₋₂]
+        # [ •        •  •  •   βₖ ]      [ •           •  • γₖ₋₁]
+        # [ •           •  βₖ  αₖ ]      [ •              •  λₖ ]
+        # [ 0  •  •  •  •  0  βₖ₊₁]      [ 0  •  •  •  •  •  0  ]
+        #
+        # Compute the Givens reflection Qₖ.ₖ₊₁
+        # [ cₖ  sₖ ] [ λbarₖ γbarₖ   0  ] = [ λₖ    γₖ      ϵₖ   ]
+        # [ sₖ -cₖ ] [ βₖ₊₁  αₖ₊₁  βₖ₊₂ ]   [ 0  λbarₖ₊₁ γbarₖ₊₁ ]
+        c_k, s_k, lambda_k = get_givens_rot(lambda_bar_k_plus_1, beta_k_plus_2)
+
+        # Compute the direction wₖ, the last column of Wₖ.
+        if k == 1:
+            # w₁ = v₁ / λ₁
+            w_k = V[:, k - 1] / lambda_k
+        elif k == 2:
+            # w₂ = (v₂ - γ₁w₁) / λ₂
+            w_k, w_k_1 = (V[:, k - 1] - gamma_k * w_k) / lambda_k, w_k
+        else:
+            # wₖ = (vₖ - γₖ₋₁wₖ₋₁ - ϵₖ₋₂wₖ₋₂) / λₖ
+            w_k, w_k_1 = (
+                (V[:, k - 1] - gamma_k * w_k - epsilon_k_1 * w_k_1) / lambda_k,
+                w_k,
+            )
+
+        # Continue the Lanczos process.
+        # AVₖ₊₁ = Vₖ₊₂Tₖ₊₂.ₖ₊₁
+        # βₖ₊₂vₖ₊₂ = Avₖ₊₁ - αₖ₊₁vₖ₊₁ - βₖ₊₁vₖ
+        if k < l:
+            V[:, k + 1] = A @ V[:, k] - beta_k_plus_2 * V[:, k - 1]
+            alpha_k_plus_1 = np.real(np.vdot(V[:, k], V[:, k + 1]))
+
+            V[:, k + 1] = double_reorthogonalization(V[:, k + 1], V[:, : k + 1])
+            beta_k_plus_2 = norm(V[:, k + 1])
+
+            # Detection of early termination
+            if np.isclose(beta_k_plus_2, 0, atol=beta_tol):
+                l = k + 1
+            else:
+                V[:, k + 1] /= beta_k_plus_2
+
+        # Apply the Givens reflection Qₖ.ₖ₊₁
+        if k < l:
+            gamma_k = c_k * gamma_bar_k_plus_1 + s_k * alpha_k_plus_1
+
+        if k == 1:
+            epsilon_k = s_k * beta_k_plus_2
+        elif k < l - 1:
+            epsilon_k, epsilon_k_1 = s_k * beta_k_plus_2, epsilon_k
+        else:
+            epsilon_k_1 = epsilon_k
+
+        if k < l:
+            lambda_bar_k_plus_1 = s_k * gamma_bar_k_plus_1 - c_k * alpha_k_plus_1
+            gamma_bar_k_plus_1 = -c_k * beta_k_plus_2
+
+        # Update the QR factorization Nₖ = Q̃ₖ [ Uₖ ].
+        #                                     [ 0ᵀ ]
+        #
+        # [ λ₁  0   •   •   •    •   0  ]      [ μ₁  ϕ₁  ρ₁  0   •    •   0    ]
+        # [ γ₁  λ₂  •                •  ]      [ 0   μ₂  ϕ₂  •   •        •    ]
+        # [ ϵ₁  γ₂  λ₃  •            •  ]      [ •   •   μ₃  •   •    •   •    ]
+        # [ 0   •   •   •   •        •  ]      [ •       •   •   •    •   0    ]
+        # [ •   •   •   •   •    •   •  ] = Q̃ₖ [ •           •  μₖ₋₂ ϕₖ₋₂ ρₖ₋₂ ]
+        # [ •       •   •   •    •   0  ]      [ •               •   μₖ₋₁ ϕₖ₋₁ ]
+        # [ •           •  ϵₖ₋₂ γₖ₋₁ λₖ ]      [ •                    •   μₖ   ]
+        # [ •               •   ϵₖ₋₁ γₖ ]      [ 0   •   •   •   •    •   0    ]
+        # [ 0  •    •   •   •    0   ϵₖ ]      [ 0   •   •   •   •    •   0    ]
+        #
+        # If k = 1, we don't have any previous reflection.
+        # If k = 2, we apply the reflections Q̃ₖ₊₁.ₖ₋₁ and Q̃ₖ.ₖ₋₁.
+        # If k ≥ 3, we apply the reflections Q̃ₖ.ₖ₋₁, Q̃ₖ₊₁.ₖ₋₁ and Q̃ₖ.ₖ₋₂.
+        if k == 1:
+            mu_bar_k = lambda_k
+            gamma_hat_k = gamma_k
+        elif k == 2:
+            lambda_hat_k = lambda_k
+        elif k >= 3:
+            rho_k_2 = s_tilde_2k_4 * lambda_k
+            lambda_hat_k = -c_tilde_2k_4 * lambda_k
+
+        if k >= 2:
+            phi_bar_k_1 = s_tilde_2k_3 * lambda_hat_k
+            mu_bar_k = -c_tilde_2k_3 * lambda_hat_k
+
+            if k < l:
+                phi_k_1 = c_tilde_2k_2 * phi_bar_k_1 + s_tilde_2k_2 * gamma_k
+                gamma_hat_k = s_tilde_2k_2 * phi_bar_k_1 - c_tilde_2k_2 * gamma_k
+            elif k == l:
+                phi_k_1 = phi_bar_k_1
+
+        if k < l:
+            # Compute and apply current Givens reflection Q̃ₖ₊₁.ₖ
+            # [ c̃₂ₖ₋₁   s̃₂ₖ₋₁    ] [ μbarₖ ] = [ μbbarₖ ]
+            # [ s̃₂ₖ₋₁  -c̃₂ₖ₋₁    ] [ γhatₖ ]   [   0    ]
+            # [                1 ] [  ϵₖ   ]   [   ϵₖ   ]
+            c_tilde_2k_1, s_tilde_2k_1, mu_bar_bar_k = get_givens_rot(
+                mu_bar_k, gamma_hat_k
+            )
+
+        if k < l - 1:
+            # Compute and apply current Givens reflection Q̃ₖ₊₂.ₖ
+            # [ c̃₂ₖ      s̃₂ₖ ] [ μbbarₖ ] = [ μₖ ]
+            # [      1       ] [   0    ]   [ 0  ]
+            # [ s̃₂ₖ     -c̃₂ₖ ] [   ϵₖ   ]   [ 0  ]
+            c_tilde_2k, s_tilde_2k, mu_k = get_givens_rot(mu_bar_bar_k, epsilon_k)
+        elif k == l - 1:
+            mu_k = mu_bar_bar_k
+        elif k == l:
+            mu_k = mu_bar_k
+
+        # Update zₖ = (Q̃ₖ)ᵀ(β₁α₁e₁ + β₁β₂e₂)
+        if k > 1:
+            zeta_k_1 = zeta_k
+        if k < l:
+            # [ c̃₂ₖ₋₁   s̃₂ₖ₋₁    ] [ ζbbarₖ  ] = [ ζcircₖ   ]
+            # [ s̃₂ₖ₋₁  -c̃₂ₖ₋₁    ] [ ζbarₖ₊₁ ]   [ ζbbarₖ₊₁ ]
+            # [                1 ] [    0    ]   [    0     ]
+            zeta_circ_k = (
+                c_tilde_2k_1 * zeta_bar_bar_k_plus_1 + s_tilde_2k_1 * zeta_bar_k_plus_2
+            )
+
+        if k < l - 1:
+            # [ c̃₂ₖ      s̃₂ₖ ] [ ζcircₖ   ] = [   ζₖ     ]
+            # [      1       ] [ ζbbarₖ₊₁ ]   [ ζbbarₖ₊₁ ]
+            # [ s̃₂ₖ     -c̃₂ₖ ] [    0     ]   [ ζbarₖ₊₂  ]
+            zeta_k = c_tilde_2k * zeta_circ_k
+        elif k == l - 1:
+            zeta_k = zeta_circ_k
+        elif k == l:
+            zeta_k = zeta_bar_bar_k_plus_1
+            if np.isclose(np.abs(zeta_k), 0, atol=beta_tol) and np.isclose(
+                np.abs(lambda_k), 0, atol=beta_tol
+            ):
+                zeta_k = 0
+        if k < l:
+            zeta_bar_bar_k_plus_1 = (
+                s_tilde_2k_1 * zeta_bar_bar_k_plus_1 - c_tilde_2k_1 * zeta_bar_k_plus_2
+            )
+        if k < l - 1:
+            zeta_bar_k_plus_2 = s_tilde_2k * zeta_circ_k
+
+        # Compute the direction dₖ, the last column of Dₖ.
+        if k == 1:
+            # d₁ = w₁ / μ₁
+            d_k = w_k / mu_k
+        elif k == 2:
+            # d₂ = (w₂ - ϕ₁d₁) / μ₂
+            d_k, d_k_1 = (w_k - phi_k_1 * d_k) / mu_k, d_k
+        else:
+            # dₖ = (wₖ - ϕₖ₋₁dₖ₋₁ - ρₖ₋₂dₖ₋₂) / μₖ
+            d_k, d_k_1 = (w_k - phi_k_1 * d_k - rho_k_2 * d_k_1) / mu_k, d_k
+
+        # Update xₖ = Vₖyₖ = Dₖzₖ = xₖ₋₁ + ζₖdₖ
+        x_k += zeta_k * d_k
+
+        # Update ‖Arₖ‖ estimate
+        if k < l - 1:
+            norm_Ar_k = norm((zeta_bar_bar_k_plus_1, zeta_bar_k_plus_2))
+        elif k == l - 1:
+            norm_Ar_k = np.abs(zeta_bar_bar_k_plus_1)
+        else:
+            norm_Ar_k = 0  # TODO: Is this good?
+
+        # Update the LQ factorization Uₖ = L̂ₖP̂ₖ
+        #
+        # [ μ₁  ϕ₁  ρ₁  0   •    •   0    ]   [ ψ₁   0    •    •     •      •       0  ]
+        # [ 0   μ₂  ϕ₂  •   •        •    ]   [ θ₁   ψ₂   •                         •  ]
+        # [ •   •   μ₃  •   •    •   •    ]   [ ω₁   θ₂   ψ₃   •                    •  ]
+        # [ •       •   •   •    •   0    ] = [ 0    •    •    •     •              •  ] P̂ₖ
+        # [ •           •  μₖ₋₂ ϕₖ₋₂ ρₖ₋₂ ]   [ •    •    •    •   ψₖ₋₂     •       •  ]
+        # [ •               •   μₖ₋₁ ϕₖ₋₁ ]   [ •         •    •   θₖ₋₂  ψbbarₖ₋₁   0  ]
+        # [ 0   •   •   •   •    0   μₖ   ]   [ 0    •    •    0   ωₖ₋₂  θbarₖ₋₁  ψbarₖ]
+        #
+        # and solve L̂ₖtₖ = zₖ.
+        if k == 1:
+            psi_bar_k = mu_k
+            tau_bar_k = zeta_k / psi_bar_k
+        elif k == 2:
+            # [ ψbar₁  ϕ₁ ] [ ĉ₁   ŝ₁ ] = [ ψbbar₁    0   ]
+            # [   0    μ₂ ] [ ŝ₁  -ĉ₁ ]   [ θbar₁   ψbar₂ ]
+            c_hat_2k_3, s_hat_2k_3, psi_bar_bar_k_1 = get_givens_rot(psi_bar_k, phi_k_1)
+            theta_bar_k_1 = s_hat_2k_3 * mu_k
+            psi_bar_k = -c_hat_2k_3 * mu_k
+
+            tau_bar_bar_k_1 = zeta_k_1 / psi_bar_bar_k_1
+            tau_bar_k = (zeta_k - theta_bar_k_1 * tau_bar_bar_k_1) / psi_bar_k
+            xi_k = zeta_k
+        else:
+            # [ ψbbarₖ₋₂   0     ρₖ₋₂ ] [ ĉ₂ₖ₋₄      ŝ₂ₖ₋₄ ]   [ ψₖ₋₂     0     0  ]
+            # [ θbarₖ₋₂  ψbarₖ₋₁ ϕₖ₋₁ ] [        1         ] = [ θₖ₋₂  ψbarₖ₋₁  δₖ ]
+            # [   0        0      μₖ  ] [ ŝ₂ₖ₋₄     -ĉ₂ₖ₋₄ ]   [ ωₖ₋₂     0     ηₖ ]
+            c_hat_2k_4, s_hat_2k_4, psi_k_2 = get_givens_rot(psi_bar_bar_k_1, rho_k_2)
+            theta_k_2 = c_hat_2k_4 * theta_bar_k_1 + s_hat_2k_4 * phi_k_1
+            delta_k = s_hat_2k_4 * theta_bar_k_1 - c_hat_2k_4 * phi_k_1
+            omega_k_2 = s_hat_2k_4 * mu_k
+            eta_k = -c_hat_2k_4 * mu_k
+
+            tau_k_2 = tau_bar_bar_k_1 * psi_bar_bar_k_1 / psi_k_2
+
+            # [ ψₖ₋₂     0     0  ] [ 1                ]   [ ψₖ₋₂    0         0   ]
+            # [ θₖ₋₂  ψbarₖ₋₁  δₖ ] [    ĉ₂ₖ₋₃   ŝ₂ₖ₋₃ ] = [ θₖ₋₂  ψbbarₖ₋₁    0   ]
+            # [ ωₖ₋₂     0     ηₖ ] [    ŝ₂ₖ₋₃  -ĉ₂ₖ₋₃ ]   [ ωₖ₋₂  θbarₖ₋₁   ψbarₖ ]
+            c_hat_2k_3, s_hat_2k_3, psi_bar_bar_k_1 = get_givens_rot(psi_bar_k, delta_k)
+            theta_bar_k_1 = s_hat_2k_3 * eta_k
+            psi_bar_k = -c_hat_2k_3 * eta_k
+
+            tau_bar_bar_k_1 = (xi_k - theta_k_2 * tau_k_2) / psi_bar_bar_k_1
+            xi_k = zeta_k - omega_k_2 * tau_k_2
+            tau_bar_k = (xi_k - theta_bar_k_1 * tau_bar_bar_k_1) / psi_bar_k
+
+        # Update (χ₁, ..., χₖ, χbarₖ₊₁) = (Qₖ)ᵀβ₁e₁
+        if k > 1:
+            chi_k_1 = chi_k
+        # [ cₖ  sₖ ] [ χbarₖ ] = [    χₖ   ]
+        # [ sₖ -cₖ ] [   0   ]   [ χbarₖ₊₁ ]
+        chi_k = c_k * chi_bar_k_plus_1
+        chi_bar_k_plus_1 = s_k * chi_bar_k_plus_1
+
+        # Update pₖ₊₁ = [ P̂ₖ  0 ](Qₖ)ᵀβ₁e₁
+        #               [ 0   1 ]
+        if k == 1:
+            pi_bar_k = chi_k
+        elif k == 2:
+            # [ ĉ₁   ŝ₁ ] [ π₁ ] = [ πbbar₁ ]
+            # [ ŝ₁  -ĉ₁ ] [ χ₂ ]   [ πbar₂  ]
+            pi_bar_bar_k_1 = c_hat_2k_3 * chi_k_1 + s_hat_2k_3 * chi_k
+            pi_bar_k = s_hat_2k_3 * chi_k_1 - c_hat_2k_3 * chi_k
+        else:
+            # [ ĉ₂ₖ₋₄      ŝ₂ₖ₋₄ ] [ πbbarₖ₋₂ ]   [ πₖ₋₂    ]
+            # [        1         ] [ πbarₖ₋₁  ] = [ πbarₖ₋₁ ]
+            # [ ŝ₂ₖ₋₄     -ĉ₂ₖ₋₄ ] [   χₖ     ]   [  υₖ     ]
+            upsilon_k = s_hat_2k_4 * pi_bar_bar_k_1 - c_hat_2k_4 * chi_k
+
+            # [ 1                ] [ πₖ₋₂    ]   [ πₖ₋₂     ]
+            # [    ĉ₂ₖ₋₃   ŝ₂ₖ₋₃ ] [ πbarₖ₋₁ ] = [ πbbarₖ₋₁ ]
+            # [    ŝ₂ₖ₋₃  -ĉ₂ₖ₋₃ ] [  υₖ     ]   [ πbarₖ    ]
+            pi_bar_bar_k_1 = c_hat_2k_3 * pi_bar_k + s_hat_2k_3 * upsilon_k
+            pi_bar_k = s_hat_2k_3 * pi_bar_k - c_hat_2k_3 * upsilon_k
+
+        # Update ‖rₖ‖ estimate
+        # ‖rₖ‖ = √((πₖ₋₁ - τₖ₋₁)² + (πₖ - τₖ)² + (πₖ₊₁)²)
+        if k == 1:
+            norm_r_k = norm((pi_bar_k - tau_bar_k, chi_bar_k_plus_1))
+        else:
+            norm_r_k = norm(
+                (
+                    pi_bar_bar_k_1 - tau_bar_bar_k_1,
+                    pi_bar_k - tau_bar_k,
+                    chi_bar_k_plus_1,
+                )
+            )
+
+        if callback is not None:
+            callback(x_k, k, norm_r_k, norm_Ar_k, *callback_args, **callback_kwargs)
+
+    if k > k_max:
+        breakdown = "maximum number of iterations exceeded"
+    elif k == l:
+        breakdown = "beta tolerance reached"
+    elif norm_r_k <= r_tol:
+        breakdown = "residual tolerance reached"
+    elif norm_Ar_k <= Ar_tol:
+        breakdown = "A-residual tolerance reached"
+
+    return x_k, (k, norm_r_k, norm_Ar_k, breakdown)
+
+
+def MinAres_TV(
+    A,
+    b,
+    r_tol=1e-10,
+    Ar_tol=1e-10,
+    k_max=None,
+    beta_tol=None,
+    *,
+    callback=None,
+    callback_args=(),
+    **callback_kwargs,
+):
+    """
+    This is an adaptaion of MinAres. Here, the matrices T and V are
+    stored explcitly and are output in addition to the usual outputs.
+    They also serve as input to the callback, if given.
+    """
+    n = A.shape[0]
+
+    if k_max is None:
+        k_max = 2 * n
+    if beta_tol is None:
+        beta_tol = max(r_tol, Ar_tol)
+
+    dtype = (
+        np.complex128
+        if A.dtype == np.complex128 or b.dtype == np.complex128
+        else np.float64
+    )
+
+    k = 0
+    l = np.inf
+    x_k = np.zeros(n, dtype=dtype)
+
+    T = np.zeros((k_max + 3, k_max + 2), dtype=dtype)
+    V = np.zeros((n, k_max + 3), dtype=dtype, order="F")
+
+    # First two iterations of Lanczos
+    beta_1 = norm(b)
+    V[:, 0] = np.divide(
+        b, beta_1, dtype=dtype
+    )  # Cast into complex dtype if b is real, but A is not
+
+    V[:, 1] = A @ V[:, 0]
+    alpha_k_plus_1 = np.real(
+        np.vdot(V[:, 0], V[:, 1])
+    )  # In exact arithmetic, this should be real. We cast it into real dtype
+    T[0, 0] = alpha_k_plus_1
+    V[:, 1] -= alpha_k_plus_1 * V[:, 0]
+    beta_k_plus_2 = norm(V[:, 1])
+    T[1, 0] = beta_k_plus_2
+    V[:, 1] /= beta_k_plus_2
+
+    zeta_bar_bar_k_plus_1 = beta_1 * alpha_k_plus_1
+    zeta_bar_k_plus_2 = beta_1 * beta_k_plus_2
+    chi_bar_k_plus_1 = beta_1
+    lambda_bar_k_plus_1 = alpha_k_plus_1
+    gamma_bar_k_plus_1 = beta_k_plus_2
+
+    norm_r_k = chi_bar_k_plus_1
+    norm_Ar_k = norm((zeta_bar_bar_k_plus_1, zeta_bar_k_plus_2))
+
+    if callback is not None:
+        callback(
+            x_k,
+            k,
+            T[:2, :1],
+            V[:, :2],
+            norm_r_k,
+            norm_Ar_k,
+            *callback_args,
+            **callback_kwargs,
+        )
+
+    c_tilde_2k_2 = (
+        c_tilde_2k_1
+    ) = c_tilde_2k = s_tilde_2k_2 = s_tilde_2k_1 = s_tilde_2k = None
+
+    while norm_r_k > r_tol and norm_Ar_k > Ar_tol and k <= k_max:
+        k += 1
+
+        c_tilde_2k_3, c_tilde_2k_1 = c_tilde_2k_1, None
+        c_tilde_2k_4, c_tilde_2k_2, c_tilde_2k = c_tilde_2k_2, c_tilde_2k, None
+        s_tilde_2k_3, s_tilde_2k_1 = s_tilde_2k_1, None
+        s_tilde_2k_4, s_tilde_2k_2, s_tilde_2k = s_tilde_2k_2, s_tilde_2k, None
+
+        # Update the QR factorization Tₖ₊₁.ₖ = Qₖ [ Rₖ ].
+        #                                         [ 0  ]
+        #
+        # [ α₁ β₂ 0  •  •  •   0  ]      [ λ₁ γ₁ ϵ₁ 0  •  •  0  ]
+        # [ β₂ α₂ β₃ •         •  ]      [ 0  λ₂ γ₂ •  •     •  ]
+        # [ 0  •  •  •  •      •  ]      [ •  •  λ₃ •  •  •  •  ]
+        # [ •  •  •  •  •  •   •  ] = Qₖ [ •     •  •  •  •  0  ]
+        # [ •     •  •  •  •   0  ]      [ •        •  •  • ϵₖ₋₂]
+        # [ •        •  •  •   βₖ ]      [ •           •  • γₖ₋₁]
+        # [ •           •  βₖ  αₖ ]      [ •              •  λₖ ]
+        # [ 0  •  •  •  •  0  βₖ₊₁]      [ 0  •  •  •  •  •  0  ]
+        #
+        # Compute the Givens reflection Qₖ.ₖ₊₁
+        # [ cₖ  sₖ ] [ λbarₖ γbarₖ   0  ] = [ λₖ    γₖ      ϵₖ   ]
+        # [ sₖ -cₖ ] [ βₖ₊₁  αₖ₊₁  βₖ₊₂ ]   [ 0  λbarₖ₊₁ γbarₖ₊₁ ]
+        c_k, s_k, lambda_k = get_givens_rot(lambda_bar_k_plus_1, beta_k_plus_2)
+
+        # Compute the direction wₖ, the last column of Wₖ.
+        if k == 1:
+            # w₁ = v₁ / λ₁
+            w_k = V[:, 0] / lambda_k
+        elif k == 2:
+            # w₂ = (v₂ - γ₁w₁) / λ₂
+            w_k, w_k_1 = (V[:, 1] - gamma_k * w_k) / lambda_k, w_k
+        else:
+            # wₖ = (vₖ - γₖ₋₁wₖ₋₁ - ϵₖ₋₂wₖ₋₂) / λₖ
+            w_k, w_k_1 = (
+                (V[:, k - 1] - gamma_k * w_k - epsilon_k_1 * w_k_1) / lambda_k,
+                w_k,
+            )
+
+        # Continue the Lanczos process.
+        # AVₖ₊₁ = Vₖ₊₂Tₖ₊₂.ₖ₊₁
+        # βₖ₊₂vₖ₊₂ = Avₖ₊₁ - αₖ₊₁vₖ₊₁ - βₖ₊₁vₖ
+        if k < l:
+            T[k - 1, k] = beta_k_plus_2
+            V[:, k + 1] = A @ V[:, k] - beta_k_plus_2 * V[:, k - 1]
+            alpha_k_plus_1 = np.real(np.vdot(V[:, k], V[:, k + 1]))
+            T[k, k] = alpha_k_plus_1
+
+            V[:, k + 1] -= alpha_k_plus_1 * V[:, k]
+            beta_k_plus_2 = norm(V[:, k + 1])
+            T[k + 1, k] = beta_k_plus_2
+
+            # Detection of early termination
+            if np.isclose(beta_k_plus_2, 0, atol=beta_tol):
+                l = k + 1
+            else:
+                V[:, k + 1] /= beta_k_plus_2
+
+        # Apply the Givens reflection Qₖ.ₖ₊₁
+        if k < l:
+            gamma_k = c_k * gamma_bar_k_plus_1 + s_k * alpha_k_plus_1
+
+        if k == 1:
+            epsilon_k = s_k * beta_k_plus_2
+        elif k < l - 1:
+            epsilon_k, epsilon_k_1 = s_k * beta_k_plus_2, epsilon_k
+        else:
+            epsilon_k_1 = epsilon_k
+
+        if k < l:
+            lambda_bar_k_plus_1 = s_k * gamma_bar_k_plus_1 - c_k * alpha_k_plus_1
+            gamma_bar_k_plus_1 = -c_k * beta_k_plus_2
+
+        # Update the QR factorization Nₖ = Q̃ₖ [ Uₖ ].
+        #                                     [ 0ᵀ ]
+        #
+        # [ λ₁  0   •   •   •    •   0  ]      [ μ₁  ϕ₁  ρ₁  0   •    •   0    ]
+        # [ γ₁  λ₂  •                •  ]      [ 0   μ₂  ϕ₂  •   •        •    ]
+        # [ ϵ₁  γ₂  λ₃  •            •  ]      [ •   •   μ₃  •   •    •   •    ]
+        # [ 0   •   •   •   •        •  ]      [ •       •   •   •    •   0    ]
+        # [ •   •   •   •   •    •   •  ] = Q̃ₖ [ •           •  μₖ₋₂ ϕₖ₋₂ ρₖ₋₂ ]
+        # [ •       •   •   •    •   0  ]      [ •               •   μₖ₋₁ ϕₖ₋₁ ]
+        # [ •           •  ϵₖ₋₂ γₖ₋₁ λₖ ]      [ •                    •   μₖ   ]
+        # [ •               •   ϵₖ₋₁ γₖ ]      [ 0   •   •   •   •    •   0    ]
+        # [ 0  •    •   •   •    0   ϵₖ ]      [ 0   •   •   •   •    •   0    ]
+        #
+        # If k = 1, we don't have any previous reflection.
+        # If k = 2, we apply the reflections Q̃ₖ₊₁.ₖ₋₁ and Q̃ₖ.ₖ₋₁.
+        # If k ≥ 3, we apply the reflections Q̃ₖ.ₖ₋₁, Q̃ₖ₊₁.ₖ₋₁ and Q̃ₖ.ₖ₋₂.
+        if k == 1:
+            mu_bar_k = lambda_k
+            gamma_hat_k = gamma_k
+        elif k == 2:
+            lambda_hat_k = lambda_k
+        elif k >= 3:
+            rho_k_2 = s_tilde_2k_4 * lambda_k
+            lambda_hat_k = -c_tilde_2k_4 * lambda_k
+
+        if k >= 2:
+            phi_bar_k_1 = s_tilde_2k_3 * lambda_hat_k
+            mu_bar_k = -c_tilde_2k_3 * lambda_hat_k
+
+            if k < l:
+                phi_k_1 = c_tilde_2k_2 * phi_bar_k_1 + s_tilde_2k_2 * gamma_k
+                gamma_hat_k = s_tilde_2k_2 * phi_bar_k_1 - c_tilde_2k_2 * gamma_k
+            elif k == l:
+                phi_k_1 = phi_bar_k_1
+
+        if k < l:
+            # Compute and apply current Givens reflection Q̃ₖ₊₁.ₖ
+            # [ c̃₂ₖ₋₁   s̃₂ₖ₋₁    ] [ μbarₖ ] = [ μbbarₖ ]
+            # [ s̃₂ₖ₋₁  -c̃₂ₖ₋₁    ] [ γhatₖ ]   [   0    ]
+            # [                1 ] [  ϵₖ   ]   [   ϵₖ   ]
+            c_tilde_2k_1, s_tilde_2k_1, mu_bar_bar_k = get_givens_rot(
+                mu_bar_k, gamma_hat_k
+            )
+
+        if k < l - 1:
+            # Compute and apply current Givens reflection Q̃ₖ₊₂.ₖ
+            # [ c̃₂ₖ      s̃₂ₖ ] [ μbbarₖ ] = [ μₖ ]
+            # [      1       ] [   0    ]   [ 0  ]
+            # [ s̃₂ₖ     -c̃₂ₖ ] [   ϵₖ   ]   [ 0  ]
+            c_tilde_2k, s_tilde_2k, mu_k = get_givens_rot(mu_bar_bar_k, epsilon_k)
+        elif k == l - 1:
+            mu_k = mu_bar_bar_k
+        elif k == l:
+            mu_k = mu_bar_k
+
+        # Update zₖ = (Q̃ₖ)ᵀ(β₁α₁e₁ + β₁β₂e₂)
+        if k > 1:
+            zeta_k_1 = zeta_k
+        if k < l:
+            # [ c̃₂ₖ₋₁   s̃₂ₖ₋₁    ] [ ζbbarₖ  ] = [ ζcircₖ   ]
+            # [ s̃₂ₖ₋₁  -c̃₂ₖ₋₁    ] [ ζbarₖ₊₁ ]   [ ζbbarₖ₊₁ ]
+            # [                1 ] [    0    ]   [    0     ]
+            zeta_circ_k = (
+                c_tilde_2k_1 * zeta_bar_bar_k_plus_1 + s_tilde_2k_1 * zeta_bar_k_plus_2
+            )
+
+        if k < l - 1:
+            # [ c̃₂ₖ      s̃₂ₖ ] [ ζcircₖ   ] = [   ζₖ     ]
+            # [      1       ] [ ζbbarₖ₊₁ ]   [ ζbbarₖ₊₁ ]
+            # [ s̃₂ₖ     -c̃₂ₖ ] [    0     ]   [ ζbarₖ₊₂  ]
+            zeta_k = c_tilde_2k * zeta_circ_k
+        elif k == l - 1:
+            zeta_k = zeta_circ_k
+        elif k == l:
+            zeta_k = zeta_bar_bar_k_plus_1
+            if np.isclose(np.abs(zeta_k), 0, atol=beta_tol) and np.isclose(
+                np.abs(lambda_k), 0, atol=beta_tol
+            ):
+                zeta_k = 0
+        if k < l:
+            zeta_bar_bar_k_plus_1 = (
+                s_tilde_2k_1 * zeta_bar_bar_k_plus_1 - c_tilde_2k_1 * zeta_bar_k_plus_2
+            )
+        if k < l - 1:
+            zeta_bar_k_plus_2 = s_tilde_2k * zeta_circ_k
+
+        # Compute the direction dₖ, the last column of Dₖ.
+        if k == 1:
+            # d₁ = w₁ / μ₁
+            d_k = w_k / mu_k
+        elif k == 2:
+            # d₂ = (w₂ - ϕ₁d₁) / μ₂
+            d_k, d_k_1 = (w_k - phi_k_1 * d_k) / mu_k, d_k
+        else:
+            # dₖ = (wₖ - ϕₖ₋₁dₖ₋₁ - ρₖ₋₂dₖ₋₂) / μₖ
+            d_k, d_k_1 = (w_k - phi_k_1 * d_k - rho_k_2 * d_k_1) / mu_k, d_k
+
+        # Update xₖ = Vₖyₖ = Dₖzₖ = xₖ₋₁ + ζₖdₖ
+        x_k += zeta_k * d_k
+
+        # Update ‖Arₖ‖ estimate
+        if k < l - 1:
+            norm_Ar_k = norm((zeta_bar_bar_k_plus_1, zeta_bar_k_plus_2))
+        elif k == l - 1:
+            norm_Ar_k = np.abs(zeta_bar_bar_k_plus_1)
+        else:
+            norm_Ar_k = 0  # TODO: Is this good?
+
+        # Update the LQ factorization Uₖ = L̂ₖP̂ₖ
+        #
+        # [ μ₁  ϕ₁  ρ₁  0   •    •   0    ]   [ ψ₁   0    •    •     •      •       0  ]
+        # [ 0   μ₂  ϕ₂  •   •        •    ]   [ θ₁   ψ₂   •                         •  ]
+        # [ •   •   μ₃  •   •    •   •    ]   [ ω₁   θ₂   ψ₃   •                    •  ]
+        # [ •       •   •   •    •   0    ] = [ 0    •    •    •     •              •  ] P̂ₖ
+        # [ •           •  μₖ₋₂ ϕₖ₋₂ ρₖ₋₂ ]   [ •    •    •    •   ψₖ₋₂     •       •  ]
+        # [ •               •   μₖ₋₁ ϕₖ₋₁ ]   [ •         •    •   θₖ₋₂  ψbbarₖ₋₁   0  ]
+        # [ 0   •   •   •   •    0   μₖ   ]   [ 0    •    •    0   ωₖ₋₂  θbarₖ₋₁  ψbarₖ]
+        #
+        # and solve L̂ₖtₖ = zₖ.
+        if k == 1:
+            psi_bar_k = mu_k
+            tau_bar_k = zeta_k / psi_bar_k
+        elif k == 2:
+            # [ ψbar₁  ϕ₁ ] [ ĉ₁   ŝ₁ ] = [ ψbbar₁    0   ]
+            # [   0    μ₂ ] [ ŝ₁  -ĉ₁ ]   [ θbar₁   ψbar₂ ]
+            c_hat_2k_3, s_hat_2k_3, psi_bar_bar_k_1 = get_givens_rot(psi_bar_k, phi_k_1)
+            theta_bar_k_1 = s_hat_2k_3 * mu_k
+            psi_bar_k = -c_hat_2k_3 * mu_k
+
+            tau_bar_bar_k_1 = zeta_k_1 / psi_bar_bar_k_1
+            tau_bar_k = (zeta_k - theta_bar_k_1 * tau_bar_bar_k_1) / psi_bar_k
+            xi_k = zeta_k
+        else:
+            # [ ψbbarₖ₋₂   0     ρₖ₋₂ ] [ ĉ₂ₖ₋₄      ŝ₂ₖ₋₄ ]   [ ψₖ₋₂     0     0  ]
+            # [ θbarₖ₋₂  ψbarₖ₋₁ ϕₖ₋₁ ] [        1         ] = [ θₖ₋₂  ψbarₖ₋₁  δₖ ]
+            # [   0        0      μₖ  ] [ ŝ₂ₖ₋₄     -ĉ₂ₖ₋₄ ]   [ ωₖ₋₂     0     ηₖ ]
+            c_hat_2k_4, s_hat_2k_4, psi_k_2 = get_givens_rot(psi_bar_bar_k_1, rho_k_2)
+            theta_k_2 = c_hat_2k_4 * theta_bar_k_1 + s_hat_2k_4 * phi_k_1
+            delta_k = s_hat_2k_4 * theta_bar_k_1 - c_hat_2k_4 * phi_k_1
+            omega_k_2 = s_hat_2k_4 * mu_k
+            eta_k = -c_hat_2k_4 * mu_k
+
+            tau_k_2 = tau_bar_bar_k_1 * psi_bar_bar_k_1 / psi_k_2
+
+            # [ ψₖ₋₂     0     0  ] [ 1                ]   [ ψₖ₋₂    0         0   ]
+            # [ θₖ₋₂  ψbarₖ₋₁  δₖ ] [    ĉ₂ₖ₋₃   ŝ₂ₖ₋₃ ] = [ θₖ₋₂  ψbbarₖ₋₁    0   ]
+            # [ ωₖ₋₂     0     ηₖ ] [    ŝ₂ₖ₋₃  -ĉ₂ₖ₋₃ ]   [ ωₖ₋₂  θbarₖ₋₁   ψbarₖ ]
+            c_hat_2k_3, s_hat_2k_3, psi_bar_bar_k_1 = get_givens_rot(psi_bar_k, delta_k)
+            theta_bar_k_1 = s_hat_2k_3 * eta_k
+            psi_bar_k = -c_hat_2k_3 * eta_k
+
+            tau_bar_bar_k_1 = (xi_k - theta_k_2 * tau_k_2) / psi_bar_bar_k_1
+            xi_k = zeta_k - omega_k_2 * tau_k_2
+            tau_bar_k = (xi_k - theta_bar_k_1 * tau_bar_bar_k_1) / psi_bar_k
+
+        # Update (χ₁, ..., χₖ, χbarₖ₊₁) = (Qₖ)ᵀβ₁e₁
+        if k > 1:
+            chi_k_1 = chi_k
+        # [ cₖ  sₖ ] [ χbarₖ ] = [    χₖ   ]
+        # [ sₖ -cₖ ] [   0   ]   [ χbarₖ₊₁ ]
+        chi_k = c_k * chi_bar_k_plus_1
+        chi_bar_k_plus_1 = s_k * chi_bar_k_plus_1
+
+        # Update pₖ₊₁ = [ P̂ₖ  0 ](Qₖ)ᵀβ₁e₁
+        #               [ 0   1 ]
+        if k == 1:
+            pi_bar_k = chi_k
+        elif k == 2:
+            # [ ĉ₁   ŝ₁ ] [ π₁ ] = [ πbbar₁ ]
+            # [ ŝ₁  -ĉ₁ ] [ χ₂ ]   [ πbar₂  ]
+            pi_bar_bar_k_1 = c_hat_2k_3 * chi_k_1 + s_hat_2k_3 * chi_k
+            pi_bar_k = s_hat_2k_3 * chi_k_1 - c_hat_2k_3 * chi_k
+        else:
+            # [ ĉ₂ₖ₋₄      ŝ₂ₖ₋₄ ] [ πbbarₖ₋₂ ]   [ πₖ₋₂    ]
+            # [        1         ] [ πbarₖ₋₁  ] = [ πbarₖ₋₁ ]
+            # [ ŝ₂ₖ₋₄     -ĉ₂ₖ₋₄ ] [   χₖ     ]   [  υₖ     ]
+            upsilon_k = s_hat_2k_4 * pi_bar_bar_k_1 - c_hat_2k_4 * chi_k
+
+            # [ 1                ] [ πₖ₋₂    ]   [ πₖ₋₂     ]
+            # [    ĉ₂ₖ₋₃   ŝ₂ₖ₋₃ ] [ πbarₖ₋₁ ] = [ πbbarₖ₋₁ ]
+            # [    ŝ₂ₖ₋₃  -ĉ₂ₖ₋₃ ] [  υₖ     ]   [ πbarₖ    ]
+            pi_bar_bar_k_1 = c_hat_2k_3 * pi_bar_k + s_hat_2k_3 * upsilon_k
+            pi_bar_k = s_hat_2k_3 * pi_bar_k - c_hat_2k_3 * upsilon_k
+
+        # Update ‖rₖ‖ estimate
+        # ‖rₖ‖ = √((πₖ₋₁ - τₖ₋₁)² + (πₖ - τₖ)² + (πₖ₊₁)²)
+        if k == 1:
+            norm_r_k = norm((pi_bar_k - tau_bar_k, chi_bar_k_plus_1))
+        else:
+            norm_r_k = norm(
+                (
+                    pi_bar_bar_k_1 - tau_bar_bar_k_1,
+                    pi_bar_k - tau_bar_k,
+                    chi_bar_k_plus_1,
+                )
+            )
+
+        if callback is not None:
+            callback(
+                x_k,
+                k,
+                T[: k + 2, : k + 1],
+                V[:, : k + 2],
+                norm_r_k,
+                norm_Ar_k,
+                *callback_args,
+                **callback_kwargs,
+            )
+
+    if k > k_max:
+        breakdown = "maximum number of iterations exceeded"
+    elif k == l:
+        breakdown = "beta tolerance reached"
+    elif norm_r_k <= r_tol:
+        breakdown = "residual tolerance reached"
+    elif norm_Ar_k <= Ar_tol:
+        breakdown = "A-residual tolerance reached"
+
+    return x_k, (
+        k,
+        T[: k + 2, : k + 1],
+        V[:, :k],
+        beta_1,
+        norm_r_k,
+        norm_Ar_k,
+        breakdown,
+    )
+
+
+def steps_2_7(
+    V,
+    alphas,
+    betas,
+    r_tol=1e-10,
+    Ar_tol=1e-10,
+    k_max=None,
+    beta_tol=None,
+    *,
+    callback=None,
+    callback_args=(),
+    **callback_kwargs,
+):
+    """
+    This method performs Steps 2-7 of Algorithm 1, i.e., it computes
+         xₖ = Vₖ(Tₖ₊₂.ₖ₊₁Tₖ₊₁.ₖ)† (β₁α₁e₁+β₁β₂e₂)
+    from the matrices Vₖ, Tₖ₊₂.ₖ₊₁ and the scalar β₁.
+    """
+
+    n = V.shape[0]
+
+    if k_max is None:
+        k_max = 2 * n
+    if beta_tol is None:
+        beta_tol = max(r_tol, Ar_tol)
+
+    dtype = np.complex128 if V.dtype == np.complex128 else np.float64
+
+    k = 0
+    l = len(betas)
+    x_k = np.zeros(n, dtype=dtype)
+
+    # First two iterations of Lanczos
+    beta_1 = betas[0]
+    v_k_plus_1 = V[:, 0]
+
+    alpha_k_plus_1 = alphas[0]
+    beta_k_plus_2 = betas[1]
+    v_k_plus_2 = V[:, 1]
+
+    zeta_bar_bar_k_plus_1 = beta_1 * alpha_k_plus_1
+    zeta_bar_k_plus_2 = beta_1 * beta_k_plus_2
+    chi_bar_k_plus_1 = beta_1
+    lambda_bar_k_plus_1 = alpha_k_plus_1
+    gamma_bar_k_plus_1 = beta_k_plus_2
+
+    norm_r_k = chi_bar_k_plus_1
+    norm_Ar_k = norm((zeta_bar_bar_k_plus_1, zeta_bar_k_plus_2))
+
+    if callback is not None:
+        callback(x_k, k, norm_r_k, norm_Ar_k, *callback_args, **callback_kwargs)
+
+    c_tilde_2k_2 = (
+        c_tilde_2k_1
+    ) = c_tilde_2k = s_tilde_2k_2 = s_tilde_2k_1 = s_tilde_2k = None
+
+    while norm_r_k > r_tol and norm_Ar_k > Ar_tol and k <= k_max:
+        k += 1
+
+        c_tilde_2k_3, c_tilde_2k_1 = c_tilde_2k_1, None
+        c_tilde_2k_4, c_tilde_2k_2, c_tilde_2k = c_tilde_2k_2, c_tilde_2k, None
+        s_tilde_2k_3, s_tilde_2k_1 = s_tilde_2k_1, None
+        s_tilde_2k_4, s_tilde_2k_2, s_tilde_2k = s_tilde_2k_2, s_tilde_2k, None
+
+        # Update the QR factorization Tₖ₊₁.ₖ = Qₖ [ Rₖ ].
+        #                                         [ 0  ]
+        #
+        # [ α₁ β₂ 0  •  •  •   0  ]      [ λ₁ γ₁ ϵ₁ 0  •  •  0  ]
+        # [ β₂ α₂ β₃ •         •  ]      [ 0  λ₂ γ₂ •  •     •  ]
+        # [ 0  •  •  •  •      •  ]      [ •  •  λ₃ •  •  •  •  ]
+        # [ •  •  •  •  •  •   •  ] = Qₖ [ •     •  •  •  •  0  ]
+        # [ •     •  •  •  •   0  ]      [ •        •  •  • ϵₖ₋₂]
+        # [ •        •  •  •   βₖ ]      [ •           •  • γₖ₋₁]
+        # [ •           •  βₖ  αₖ ]      [ •              •  λₖ ]
+        # [ 0  •  •  •  •  0  βₖ₊₁]      [ 0  •  •  •  •  •  0  ]
+        #
+        # Compute the Givens reflection Qₖ.ₖ₊₁
+        # [ cₖ  sₖ ] [ λbarₖ γbarₖ   0  ] = [ λₖ    γₖ      ϵₖ   ]
+        # [ sₖ -cₖ ] [ βₖ₊₁  αₖ₊₁  βₖ₊₂ ]   [ 0  λbarₖ₊₁ γbarₖ₊₁ ]
+        c_k, s_k, lambda_k = get_givens_rot(lambda_bar_k_plus_1, beta_k_plus_2)
+
+        # Compute the direction wₖ, the last column of Wₖ.
+        v_k_plus_1 = V[:, k - 1]
+        if k == 1:
+            # w₁ = v₁ / λ₁
+            w_k = v_k_plus_1 / lambda_k
+        elif k == 2:
+            # w₂ = (v₂ - γ₁w₁) / λ₂
+            w_k, w_k_1 = (v_k_plus_1 - gamma_k * w_k) / lambda_k, w_k
+        else:
+            # wₖ = (vₖ - γₖ₋₁wₖ₋₁ - ϵₖ₋₂wₖ₋₂) / λₖ
+            w_k, w_k_1 = (
+                (v_k_plus_1 - gamma_k * w_k - epsilon_k_1 * w_k_1) / lambda_k,
+                w_k,
+            )
+
+        # Fetch the values for the Lanczos process.
+        # AVₖ₊₁ = Vₖ₊₂Tₖ₊₂.ₖ₊₁
+        # βₖ₊₂vₖ₊₂ = Avₖ₊₁ - αₖ₊₁vₖ₊₁ - βₖ₊₁vₖ
+        if k < l - 1:
+            alpha_k_plus_1 = alphas[k]
+            beta_k_plus_2 = betas[k + 1]
+        elif k < l:
+            alpha_k_plus_1 = 0
+            beta_k_plus_2 = 0
+
+        # Apply the Givens reflection Qₖ.ₖ₊₁
+        if k < l:
+            gamma_k = c_k * gamma_bar_k_plus_1 + s_k * alpha_k_plus_1
+
+        if k == 1:
+            epsilon_k = s_k * beta_k_plus_2
+        elif k < l - 1:
+            epsilon_k, epsilon_k_1 = s_k * beta_k_plus_2, epsilon_k
+        else:
+            epsilon_k_1 = epsilon_k
+
+        if k < l:
+            lambda_bar_k_plus_1 = s_k * gamma_bar_k_plus_1 - c_k * alpha_k_plus_1
+            gamma_bar_k_plus_1 = -c_k * beta_k_plus_2
+
+        # Update the QR factorization Nₖ = Q̃ₖ [ Uₖ ].
+        #                                     [ 0ᵀ ]
+        #
+        # [ λ₁  0   •   •   •    •   0  ]      [ μ₁  ϕ₁  ρ₁  0   •    •   0    ]
+        # [ γ₁  λ₂  •                •  ]      [ 0   μ₂  ϕ₂  •   •        •    ]
+        # [ ϵ₁  γ₂  λ₃  •            •  ]      [ •   •   μ₃  •   •    •   •    ]
+        # [ 0   •   •   •   •        •  ]      [ •       •   •   •    •   0    ]
+        # [ •   •   •   •   •    •   •  ] = Q̃ₖ [ •           •  μₖ₋₂ ϕₖ₋₂ ρₖ₋₂ ]
+        # [ •       •   •   •    •   0  ]      [ •               •   μₖ₋₁ ϕₖ₋₁ ]
+        # [ •           •  ϵₖ₋₂ γₖ₋₁ λₖ ]      [ •                    •   μₖ   ]
+        # [ •               •   ϵₖ₋₁ γₖ ]      [ 0   •   •   •   •    •   0    ]
+        # [ 0  •    •   •   •    0   ϵₖ ]      [ 0   •   •   •   •    •   0    ]
+        #
+        # If k = 1, we don't have any previous reflection.
+        # If k = 2, we apply the reflections Q̃ₖ₊₁.ₖ₋₁ and Q̃ₖ.ₖ₋₁.
+        # If k ≥ 3, we apply the reflections Q̃ₖ.ₖ₋₁, Q̃ₖ₊₁.ₖ₋₁ and Q̃ₖ.ₖ₋₂.
+        if k == 1:
+            mu_bar_k = lambda_k
+            gamma_hat_k = gamma_k
+        elif k == 2:
+            lambda_hat_k = lambda_k
+        elif k >= 3:
+            rho_k_2 = s_tilde_2k_4 * lambda_k
+            lambda_hat_k = -c_tilde_2k_4 * lambda_k
+
+        if k >= 2:
+            phi_bar_k_1 = s_tilde_2k_3 * lambda_hat_k
+            mu_bar_k = -c_tilde_2k_3 * lambda_hat_k
+
+            if k < l:
+                phi_k_1 = c_tilde_2k_2 * phi_bar_k_1 + s_tilde_2k_2 * gamma_k
+                gamma_hat_k = s_tilde_2k_2 * phi_bar_k_1 - c_tilde_2k_2 * gamma_k
+            elif k == l:
+                phi_k_1 = phi_bar_k_1
+
+        if k < l:
+            # Compute and apply current Givens reflection Q̃ₖ₊₁.ₖ
+            # [ c̃₂ₖ₋₁   s̃₂ₖ₋₁    ] [ μbarₖ ] = [ μbbarₖ ]
+            # [ s̃₂ₖ₋₁  -c̃₂ₖ₋₁    ] [ γhatₖ ]   [   0    ]
+            # [                1 ] [  ϵₖ   ]   [   ϵₖ   ]
+            c_tilde_2k_1, s_tilde_2k_1, mu_bar_bar_k = get_givens_rot(
+                mu_bar_k, gamma_hat_k
+            )
+
+        if k < l - 1:
+            # Compute and apply current Givens reflection Q̃ₖ₊₂.ₖ
+            # [ c̃₂ₖ      s̃₂ₖ ] [ μbbarₖ ] = [ μₖ ]
+            # [      1       ] [   0    ]   [ 0  ]
+            # [ s̃₂ₖ     -c̃₂ₖ ] [   ϵₖ   ]   [ 0  ]
+            c_tilde_2k, s_tilde_2k, mu_k = get_givens_rot(mu_bar_bar_k, epsilon_k)
+        elif k == l - 1:
+            mu_k = mu_bar_bar_k
+        elif k == l:
+            mu_k = mu_bar_k
+
+        # Update zₖ = (Q̃ₖ)ᵀ(β₁α₁e₁ + β₁β₂e₂)
+        if k > 1:
+            zeta_k_1 = zeta_k
+        if k < l:
+            # [ c̃₂ₖ₋₁   s̃₂ₖ₋₁    ] [ ζbbarₖ  ] = [ ζcircₖ   ]
+            # [ s̃₂ₖ₋₁  -c̃₂ₖ₋₁    ] [ ζbarₖ₊₁ ]   [ ζbbarₖ₊₁ ]
+            # [                1 ] [    0    ]   [    0     ]
+            zeta_circ_k = (
+                c_tilde_2k_1 * zeta_bar_bar_k_plus_1 + s_tilde_2k_1 * zeta_bar_k_plus_2
+            )
+
+        if k < l - 1:
+            # [ c̃₂ₖ      s̃₂ₖ ] [ ζcircₖ   ] = [   ζₖ     ]
+            # [      1       ] [ ζbbarₖ₊₁ ]   [ ζbbarₖ₊₁ ]
+            # [ s̃₂ₖ     -c̃₂ₖ ] [    0     ]   [ ζbarₖ₊₂  ]
+            zeta_k = c_tilde_2k * zeta_circ_k
+        elif k == l - 1:
+            zeta_k = zeta_circ_k
+        elif k == l:
+            zeta_k = zeta_bar_bar_k_plus_1
+            if np.isclose(np.abs(zeta_k), 0, atol=beta_tol) and np.isclose(
+                np.abs(lambda_k), 0, atol=beta_tol
+            ):
+                zeta_k = 0
+        if k < l:
+            zeta_bar_bar_k_plus_1 = (
+                s_tilde_2k_1 * zeta_bar_bar_k_plus_1 - c_tilde_2k_1 * zeta_bar_k_plus_2
+            )
+        if k < l - 1:
+            zeta_bar_k_plus_2 = s_tilde_2k * zeta_circ_k
+
+        # Compute the direction dₖ, the last column of Dₖ.
+        if k == 1:
+            # d₁ = w₁ / μ₁
+            d_k = w_k / mu_k
+        elif k == 2:
+            # d₂ = (w₂ - ϕ₁d₁) / μ₂
+            d_k, d_k_1 = (w_k - phi_k_1 * d_k) / mu_k, d_k
+        else:
+            # dₖ = (wₖ - ϕₖ₋₁dₖ₋₁ - ρₖ₋₂dₖ₋₂) / μₖ
+            d_k, d_k_1 = (w_k - phi_k_1 * d_k - rho_k_2 * d_k_1) / mu_k, d_k
+
+        # Update xₖ = Vₖyₖ = Dₖzₖ = xₖ₋₁ + ζₖdₖ
+        x_k += zeta_k * d_k
+
+        # Update ‖Arₖ‖ estimate
+        if k < l - 1:
+            norm_Ar_k = norm((zeta_bar_bar_k_plus_1, zeta_bar_k_plus_2))
+        elif k == l - 1:
+            norm_Ar_k = np.abs(zeta_bar_bar_k_plus_1)
+        else:
+            norm_Ar_k = 0  # TODO: Is this good?
+
+        # Update the LQ factorization Uₖ = L̂ₖP̂ₖ
+        #
+        # [ μ₁  ϕ₁  ρ₁  0   •    •   0    ]   [ ψ₁   0    •    •     •      •       0  ]
+        # [ 0   μ₂  ϕ₂  •   •        •    ]   [ θ₁   ψ₂   •                         •  ]
+        # [ •   •   μ₃  •   •    •   •    ]   [ ω₁   θ₂   ψ₃   •                    •  ]
+        # [ •       •   •   •    •   0    ] = [ 0    •    •    •     •              •  ] P̂ₖ
+        # [ •           •  μₖ₋₂ ϕₖ₋₂ ρₖ₋₂ ]   [ •    •    •    •   ψₖ₋₂     •       •  ]
+        # [ •               •   μₖ₋₁ ϕₖ₋₁ ]   [ •         •    •   θₖ₋₂  ψbbarₖ₋₁   0  ]
+        # [ 0   •   •   •   •    0   μₖ   ]   [ 0    •    •    0   ωₖ₋₂  θbarₖ₋₁  ψbarₖ]
+        #
+        # and solve L̂ₖtₖ = zₖ.
+        if k == 1:
+            psi_bar_k = mu_k
+            tau_bar_k = zeta_k / psi_bar_k
+        elif k == 2:
+            # [ ψbar₁  ϕ₁ ] [ ĉ₁   ŝ₁ ] = [ ψbbar₁    0   ]
+            # [   0    μ₂ ] [ ŝ₁  -ĉ₁ ]   [ θbar₁   ψbar₂ ]
+            c_hat_2k_3, s_hat_2k_3, psi_bar_bar_k_1 = get_givens_rot(psi_bar_k, phi_k_1)
+            theta_bar_k_1 = s_hat_2k_3 * mu_k
+            psi_bar_k = -c_hat_2k_3 * mu_k
+
+            tau_bar_bar_k_1 = zeta_k_1 / psi_bar_bar_k_1
+            tau_bar_k = (zeta_k - theta_bar_k_1 * tau_bar_bar_k_1) / psi_bar_k
+            xi_k = zeta_k
+        else:
+            # [ ψbbarₖ₋₂   0     ρₖ₋₂ ] [ ĉ₂ₖ₋₄      ŝ₂ₖ₋₄ ]   [ ψₖ₋₂     0     0  ]
+            # [ θbarₖ₋₂  ψbarₖ₋₁ ϕₖ₋₁ ] [        1         ] = [ θₖ₋₂  ψbarₖ₋₁  δₖ ]
+            # [   0        0      μₖ  ] [ ŝ₂ₖ₋₄     -ĉ₂ₖ₋₄ ]   [ ωₖ₋₂     0     ηₖ ]
+            c_hat_2k_4, s_hat_2k_4, psi_k_2 = get_givens_rot(psi_bar_bar_k_1, rho_k_2)
+            theta_k_2 = c_hat_2k_4 * theta_bar_k_1 + s_hat_2k_4 * phi_k_1
+            delta_k = s_hat_2k_4 * theta_bar_k_1 - c_hat_2k_4 * phi_k_1
+            omega_k_2 = s_hat_2k_4 * mu_k
+            eta_k = -c_hat_2k_4 * mu_k
+
+            tau_k_2 = tau_bar_bar_k_1 * psi_bar_bar_k_1 / psi_k_2
+
+            # [ ψₖ₋₂     0     0  ] [ 1                ]   [ ψₖ₋₂    0         0   ]
+            # [ θₖ₋₂  ψbarₖ₋₁  δₖ ] [    ĉ₂ₖ₋₃   ŝ₂ₖ₋₃ ] = [ θₖ₋₂  ψbbarₖ₋₁    0   ]
+            # [ ωₖ₋₂     0     ηₖ ] [    ŝ₂ₖ₋₃  -ĉ₂ₖ₋₃ ]   [ ωₖ₋₂  θbarₖ₋₁   ψbarₖ ]
+            c_hat_2k_3, s_hat_2k_3, psi_bar_bar_k_1 = get_givens_rot(psi_bar_k, delta_k)
+            theta_bar_k_1 = s_hat_2k_3 * eta_k
+            psi_bar_k = -c_hat_2k_3 * eta_k
+
+            tau_bar_bar_k_1 = (xi_k - theta_k_2 * tau_k_2) / psi_bar_bar_k_1
+            xi_k = zeta_k - omega_k_2 * tau_k_2
+            tau_bar_k = (xi_k - theta_bar_k_1 * tau_bar_bar_k_1) / psi_bar_k
+
+        # Update (χ₁, ..., χₖ, χbarₖ₊₁) = (Qₖ)ᵀβ₁e₁
+        if k > 1:
+            chi_k_1 = chi_k
+        # [ cₖ  sₖ ] [ χbarₖ ] = [    χₖ   ]
+        # [ sₖ -cₖ ] [   0   ]   [ χbarₖ₊₁ ]
+        chi_k = c_k * chi_bar_k_plus_1
+        chi_bar_k_plus_1 = s_k * chi_bar_k_plus_1
+
+        # Update pₖ₊₁ = [ P̂ₖ  0 ](Qₖ)ᵀβ₁e₁
+        #               [ 0   1 ]
+        if k == 1:
+            pi_bar_k = chi_k
+        elif k == 2:
+            # [ ĉ₁   ŝ₁ ] [ π₁ ] = [ πbbar₁ ]
+            # [ ŝ₁  -ĉ₁ ] [ χ₂ ]   [ πbar₂  ]
+            pi_bar_bar_k_1 = c_hat_2k_3 * chi_k_1 + s_hat_2k_3 * chi_k
+            pi_bar_k = s_hat_2k_3 * chi_k_1 - c_hat_2k_3 * chi_k
+        else:
+            # [ ĉ₂ₖ₋₄      ŝ₂ₖ₋₄ ] [ πbbarₖ₋₂ ]   [ πₖ₋₂    ]
+            # [        1         ] [ πbarₖ₋₁  ] = [ πbarₖ₋₁ ]
+            # [ ŝ₂ₖ₋₄     -ĉ₂ₖ₋₄ ] [   χₖ     ]   [  υₖ     ]
+            upsilon_k = s_hat_2k_4 * pi_bar_bar_k_1 - c_hat_2k_4 * chi_k
+
+            # [ 1                ] [ πₖ₋₂    ]   [ πₖ₋₂     ]
+            # [    ĉ₂ₖ₋₃   ŝ₂ₖ₋₃ ] [ πbarₖ₋₁ ] = [ πbbarₖ₋₁ ]
+            # [    ŝ₂ₖ₋₃  -ĉ₂ₖ₋₃ ] [  υₖ     ]   [ πbarₖ    ]
+            pi_bar_bar_k_1 = c_hat_2k_3 * pi_bar_k + s_hat_2k_3 * upsilon_k
+            pi_bar_k = s_hat_2k_3 * pi_bar_k - c_hat_2k_3 * upsilon_k
+
+        # Update ‖rₖ‖ estimate
+        # ‖rₖ‖ = √((πₖ₋₁ - τₖ₋₁)² + (πₖ - τₖ)² + (πₖ₊₁)²)
+        if k == 1:
+            norm_r_k = norm((pi_bar_k - tau_bar_k, chi_bar_k_plus_1))
+        else:
+            norm_r_k = norm(
+                (
+                    pi_bar_bar_k_1 - tau_bar_bar_k_1,
+                    pi_bar_k - tau_bar_k,
+                    chi_bar_k_plus_1,
+                )
+            )
+
+        if callback is not None:
+            callback(x_k, k, norm_r_k, norm_Ar_k, *callback_args, **callback_kwargs)
+
+    if k > k_max:
+        breakdown = "maximum number of iterations exceeded"
+    elif k == l:
+        breakdown = "beta tolerance reached"
+    elif norm_r_k <= r_tol:
+        breakdown = "residual tolerance reached"
+    elif norm_Ar_k <= Ar_tol:
+        breakdown = "A-residual tolerance reached"
+
+    return x_k, (k, norm_r_k, norm_Ar_k, breakdown)
+
+
+def MinAres_t(
+    A,
+    b,
+    r_tol=1e-10,
+    Ar_tol=1e-10,
+    k_max=None,
+    beta_tol=None,
+    *,
+    callback=None,
+    callback_args=(),
+    **callback_kwargs,
+):
+    """
+    This is essentially the same as MinAres, except, that it explicitly
+    keeps track of Rₖ, Uₖ, zₖ and tₖ.
+    """
+
+    import scipy
+
+    n = A.shape[0]
+
+    if k_max is None:
+        k_max = 2 * n
+    if beta_tol is None:
+        beta_tol = max(r_tol, Ar_tol)
+
+    dtype = (
+        np.complex128
+        if A.dtype == np.complex128 or b.dtype == np.complex128
+        else np.float64
+    )
+
+    k = 0
+    l = np.inf
+    x_k = np.zeros(n, dtype=dtype)
+
+    R = np.zeros((k_max + 3, k_max + 3))
+    U = np.zeros((k_max + 3, k_max + 3))
+    z = np.zeros(k_max + 3)
+
+    # First two iterations of Lanczos
+    beta_1 = norm(b)
+    v_k_plus_1 = np.divide(
+        b, beta_1, dtype=dtype
+    )  # Cast into complex dtype if b is real, but A is not
+
+    v_k_plus_2 = A @ v_k_plus_1
+    alpha_k_plus_1 = np.real(
+        np.vdot(v_k_plus_1, v_k_plus_2)
+    )  # In exact arithmetic, this should be real. We cast it into real dtype
+    v_k_plus_2 -= alpha_k_plus_1 * v_k_plus_1
+    beta_k_plus_2 = norm(v_k_plus_2)
+    v_k_plus_2 /= beta_k_plus_2
+
+    zeta_bar_bar_k_plus_1 = beta_1 * alpha_k_plus_1
+    zeta_bar_k_plus_2 = beta_1 * beta_k_plus_2
+    chi_bar_k_plus_1 = beta_1
+    lambda_bar_k_plus_1 = alpha_k_plus_1
+    gamma_bar_k_plus_1 = beta_k_plus_2
+
+    norm_r_k = chi_bar_k_plus_1
+    norm_Ar_k = norm((zeta_bar_bar_k_plus_1, zeta_bar_k_plus_2))
+
+    if callback is not None:
+        callback(
+            x_k, np.array([]), k, norm_r_k, norm_Ar_k, *callback_args, **callback_kwargs
+        )
+
+    c_tilde_2k_2 = (
+        c_tilde_2k_1
+    ) = c_tilde_2k = s_tilde_2k_2 = s_tilde_2k_1 = s_tilde_2k = None
+
+    while norm_r_k > r_tol and norm_Ar_k > Ar_tol and k <= k_max:
+        k += 1
+
+        c_tilde_2k_3, c_tilde_2k_1 = c_tilde_2k_1, None
+        c_tilde_2k_4, c_tilde_2k_2, c_tilde_2k = c_tilde_2k_2, c_tilde_2k, None
+        s_tilde_2k_3, s_tilde_2k_1 = s_tilde_2k_1, None
+        s_tilde_2k_4, s_tilde_2k_2, s_tilde_2k = s_tilde_2k_2, s_tilde_2k, None
+
+        # Update the QR factorization Tₖ₊₁.ₖ = Qₖ [ Rₖ ].
+        #                                         [ 0  ]
+        #
+        # [ α₁ β₂ 0  •  •  •   0  ]      [ λ₁ γ₁ ϵ₁ 0  •  •  0  ]
+        # [ β₂ α₂ β₃ •         •  ]      [ 0  λ₂ γ₂ •  •     •  ]
+        # [ 0  •  •  •  •      •  ]      [ •  •  λ₃ •  •  •  •  ]
+        # [ •  •  •  •  •  •   •  ] = Qₖ [ •     •  •  •  •  0  ]
+        # [ •     •  •  •  •   0  ]      [ •        •  •  • ϵₖ₋₂]
+        # [ •        •  •  •   βₖ ]      [ •           •  • γₖ₋₁]
+        # [ •           •  βₖ  αₖ ]      [ •              •  λₖ ]
+        # [ 0  •  •  •  •  0  βₖ₊₁]      [ 0  •  •  •  •  •  0  ]
+        #
+        # Compute the Givens reflection Qₖ.ₖ₊₁
+        # [ cₖ  sₖ ] [ λbarₖ γbarₖ   0  ] = [ λₖ    γₖ      ϵₖ   ]
+        # [ sₖ -cₖ ] [ βₖ₊₁  αₖ₊₁  βₖ₊₂ ]   [ 0  λbarₖ₊₁ γbarₖ₊₁ ]
+        c_k, s_k, lambda_k = get_givens_rot(lambda_bar_k_plus_1, beta_k_plus_2)
+        R[k - 1, k - 1] = lambda_k
+
+        # Compute the direction wₖ, the last column of Wₖ.
+        if k == 1:
+            # w₁ = v₁ / λ₁
+            w_k = v_k_plus_1 / lambda_k
+        elif k == 2:
+            # w₂ = (v₂ - γ₁w₁) / λ₂
+            w_k, w_k_1 = (v_k_plus_1 - gamma_k * w_k) / lambda_k, w_k
+        else:
+            # wₖ = (vₖ - γₖ₋₁wₖ₋₁ - ϵₖ₋₂wₖ₋₂) / λₖ
+            w_k, w_k_1 = (
+                (v_k_plus_1 - gamma_k * w_k - epsilon_k_1 * w_k_1) / lambda_k,
+                w_k,
+            )
+
+        # Continue the Lanczos process.
+        # AVₖ₊₁ = Vₖ₊₂Tₖ₊₂.ₖ₊₁
+        # βₖ₊₂vₖ₊₂ = Avₖ₊₁ - αₖ₊₁vₖ₊₁ - βₖ₊₁vₖ
+        if k < l:
+            v_k_plus_2, v_k_plus_1 = (
+                A @ v_k_plus_2 - beta_k_plus_2 * v_k_plus_1,
+                v_k_plus_2,
+            )
+            alpha_k_plus_1 = np.real(np.vdot(v_k_plus_1, v_k_plus_2))
+
+            v_k_plus_2 -= alpha_k_plus_1 * v_k_plus_1
+            beta_k_plus_2 = norm(v_k_plus_2)
+
+            # Detection of early termination
+            if np.isclose(beta_k_plus_2, 0, atol=beta_tol):
+                l = k + 1
+            else:
+                v_k_plus_2 /= beta_k_plus_2
+
+        # Apply the Givens reflection Qₖ.ₖ₊₁
+        if k < l:
+            gamma_k = c_k * gamma_bar_k_plus_1 + s_k * alpha_k_plus_1
+            R[k - 1, k] = gamma_k
+
+        if k == 1:
+            epsilon_k = s_k * beta_k_plus_2
+            R[k - 1, k + 1] = epsilon_k
+        elif k < l - 1:
+            epsilon_k, epsilon_k_1 = s_k * beta_k_plus_2, epsilon_k
+            R[k - 1, k + 1] = epsilon_k
+        else:
+            epsilon_k_1 = epsilon_k
+
+        if k < l:
+            lambda_bar_k_plus_1 = s_k * gamma_bar_k_plus_1 - c_k * alpha_k_plus_1
+            gamma_bar_k_plus_1 = -c_k * beta_k_plus_2
+
+        # Update the QR factorization Nₖ = Q̃ₖ [ Uₖ ].
+        #                                     [ 0ᵀ ]
+        #
+        # [ λ₁  0   •   •   •    •   0  ]      [ μ₁  ϕ₁  ρ₁  0   •    •   0    ]
+        # [ γ₁  λ₂  •                •  ]      [ 0   μ₂  ϕ₂  •   •        •    ]
+        # [ ϵ₁  γ₂  λ₃  •            •  ]      [ •   •   μ₃  •   •    •   •    ]
+        # [ 0   •   •   •   •        •  ]      [ •       •   •   •    •   0    ]
+        # [ •   •   •   •   •    •   •  ] = Q̃ₖ [ •           •  μₖ₋₂ ϕₖ₋₂ ρₖ₋₂ ]
+        # [ •       •   •   •    •   0  ]      [ •               •   μₖ₋₁ ϕₖ₋₁ ]
+        # [ •           •  ϵₖ₋₂ γₖ₋₁ λₖ ]      [ •                    •   μₖ   ]
+        # [ •               •   ϵₖ₋₁ γₖ ]      [ 0   •   •   •   •    •   0    ]
+        # [ 0  •    •   •   •    0   ϵₖ ]      [ 0   •   •   •   •    •   0    ]
+        #
+        # If k = 1, we don't have any previous reflection.
+        # If k = 2, we apply the reflections Q̃ₖ₊₁.ₖ₋₁ and Q̃ₖ.ₖ₋₁.
+        # If k ≥ 3, we apply the reflections Q̃ₖ.ₖ₋₁, Q̃ₖ₊₁.ₖ₋₁ and Q̃ₖ.ₖ₋₂.
+        if k == 1:
+            mu_bar_k = lambda_k
+            gamma_hat_k = gamma_k
+        elif k == 2:
+            lambda_hat_k = lambda_k
+        elif k >= 3:
+            rho_k_2 = s_tilde_2k_4 * lambda_k
+            U[k - 3, k - 1] = rho_k_2
+            lambda_hat_k = -c_tilde_2k_4 * lambda_k
+
+        if k >= 2:
+            phi_bar_k_1 = s_tilde_2k_3 * lambda_hat_k
+            mu_bar_k = -c_tilde_2k_3 * lambda_hat_k
+
+            if k < l:
+                phi_k_1 = c_tilde_2k_2 * phi_bar_k_1 + s_tilde_2k_2 * gamma_k
+                gamma_hat_k = s_tilde_2k_2 * phi_bar_k_1 - c_tilde_2k_2 * gamma_k
+            elif k == l:
+                phi_k_1 = phi_bar_k_1
+            U[k - 2, k - 1] = phi_k_1
+
+        if k < l:
+            # Compute and apply current Givens reflection Q̃ₖ₊₁.ₖ
+            # [ c̃₂ₖ₋₁   s̃₂ₖ₋₁    ] [ μbarₖ ] = [ μbbarₖ ]
+            # [ s̃₂ₖ₋₁  -c̃₂ₖ₋₁    ] [ γhatₖ ]   [   0    ]
+            # [                1 ] [  ϵₖ   ]   [   ϵₖ   ]
+            c_tilde_2k_1, s_tilde_2k_1, mu_bar_bar_k = get_givens_rot(
+                mu_bar_k, gamma_hat_k
+            )
+
+        if k < l - 1:
+            # Compute and apply current Givens reflection Q̃ₖ₊₂.ₖ
+            # [ c̃₂ₖ      s̃₂ₖ ] [ μbbarₖ ] = [ μₖ ]
+            # [      1       ] [   0    ]   [ 0  ]
+            # [ s̃₂ₖ     -c̃₂ₖ ] [   ϵₖ   ]   [ 0  ]
+            c_tilde_2k, s_tilde_2k, mu_k = get_givens_rot(mu_bar_bar_k, epsilon_k)
+        elif k == l - 1:
+            mu_k = mu_bar_bar_k
+        elif k == l:
+            mu_k = mu_bar_k
+        U[k - 1, k - 1] = mu_k
+
+        # Update zₖ = (Q̃ₖ)ᵀ(β₁α₁e₁ + β₁β₂e₂)
+        if k > 1:
+            zeta_k_1 = zeta_k
+        if k < l:
+            # [ c̃₂ₖ₋₁   s̃₂ₖ₋₁    ] [ ζbbarₖ  ] = [ ζcircₖ   ]
+            # [ s̃₂ₖ₋₁  -c̃₂ₖ₋₁    ] [ ζbarₖ₊₁ ]   [ ζbbarₖ₊₁ ]
+            # [                1 ] [    0    ]   [    0     ]
+            zeta_circ_k = (
+                c_tilde_2k_1 * zeta_bar_bar_k_plus_1 + s_tilde_2k_1 * zeta_bar_k_plus_2
+            )
+
+        if k < l - 1:
+            # [ c̃₂ₖ      s̃₂ₖ ] [ ζcircₖ   ] = [   ζₖ     ]
+            # [      1       ] [ ζbbarₖ₊₁ ]   [ ζbbarₖ₊₁ ]
+            # [ s̃₂ₖ     -c̃₂ₖ ] [    0     ]   [ ζbarₖ₊₂  ]
+            zeta_k = c_tilde_2k * zeta_circ_k
+        elif k == l - 1:
+            zeta_k = zeta_circ_k
+        elif k == l:
+            zeta_k = zeta_bar_bar_k_plus_1
+            if np.isclose(np.abs(zeta_k), 0, atol=beta_tol) and np.isclose(
+                np.abs(lambda_k), 0, atol=beta_tol
+            ):
+                zeta_k = 0
+        z[k - 1] = zeta_k
+        if k < l:
+            zeta_bar_bar_k_plus_1 = (
+                s_tilde_2k_1 * zeta_bar_bar_k_plus_1 - c_tilde_2k_1 * zeta_bar_k_plus_2
+            )
+        if k < l - 1:
+            zeta_bar_k_plus_2 = s_tilde_2k * zeta_circ_k
+
+        # Compute the direction dₖ, the last column of Dₖ.
+        if k == 1:
+            # d₁ = w₁ / μ₁
+            d_k = w_k / mu_k
+        elif k == 2:
+            # d₂ = (w₂ - ϕ₁d₁) / μ₂
+            d_k, d_k_1 = (w_k - phi_k_1 * d_k) / mu_k, d_k
+        else:
+            # dₖ = (wₖ - ϕₖ₋₁dₖ₋₁ - ρₖ₋₂dₖ₋₂) / μₖ
+            d_k, d_k_1 = (w_k - phi_k_1 * d_k - rho_k_2 * d_k_1) / mu_k, d_k
+
+        # Update xₖ = Vₖyₖ = Dₖzₖ = xₖ₋₁ + ζₖdₖ
+        x_k += zeta_k * d_k
+
+        # Update ‖Arₖ‖ estimate
+        if k < l - 1:
+            norm_Ar_k = norm((zeta_bar_bar_k_plus_1, zeta_bar_k_plus_2))
+        elif k == l - 1:
+            norm_Ar_k = np.abs(zeta_bar_bar_k_plus_1)
+        else:
+            norm_Ar_k = 0  # TODO: Is this good?
+
+        # Update the LQ factorization Uₖ = L̂ₖP̂ₖ
+        #
+        # [ μ₁  ϕ₁  ρ₁  0   •    •   0    ]   [ ψ₁   0    •    •     •      •       0  ]
+        # [ 0   μ₂  ϕ₂  •   •        •    ]   [ θ₁   ψ₂   •                         •  ]
+        # [ •   •   μ₃  •   •    •   •    ]   [ ω₁   θ₂   ψ₃   •                    •  ]
+        # [ •       •   •   •    •   0    ] = [ 0    •    •    •     •              •  ] P̂ₖ
+        # [ •           •  μₖ₋₂ ϕₖ₋₂ ρₖ₋₂ ]   [ •    •    •    •   ψₖ₋₂     •       •  ]
+        # [ •               •   μₖ₋₁ ϕₖ₋₁ ]   [ •         •    •   θₖ₋₂  ψbbarₖ₋₁   0  ]
+        # [ 0   •   •   •   •    0   μₖ   ]   [ 0    •    •    0   ωₖ₋₂  θbarₖ₋₁  ψbarₖ]
+        #
+        # and solve L̂ₖtₖ = zₖ.
+        if k == 1:
+            psi_bar_k = mu_k
+            tau_bar_k = zeta_k / psi_bar_k
+        elif k == 2:
+            # [ ψbar₁  ϕ₁ ] [ ĉ₁   ŝ₁ ] = [ ψbbar₁    0   ]
+            # [   0    μ₂ ] [ ŝ₁  -ĉ₁ ]   [ θbar₁   ψbar₂ ]
+            c_hat_2k_3, s_hat_2k_3, psi_bar_bar_k_1 = get_givens_rot(psi_bar_k, phi_k_1)
+            theta_bar_k_1 = s_hat_2k_3 * mu_k
+            psi_bar_k = -c_hat_2k_3 * mu_k
+
+            tau_bar_bar_k_1 = zeta_k_1 / psi_bar_bar_k_1
+            tau_bar_k = (zeta_k - theta_bar_k_1 * tau_bar_bar_k_1) / psi_bar_k
+            xi_k = zeta_k
+        else:
+            # [ ψbbarₖ₋₂   0     ρₖ₋₂ ] [ ĉ₂ₖ₋₄      ŝ₂ₖ₋₄ ]   [ ψₖ₋₂     0     0  ]
+            # [ θbarₖ₋₂  ψbarₖ₋₁ ϕₖ₋₁ ] [        1         ] = [ θₖ₋₂  ψbarₖ₋₁  δₖ ]
+            # [   0        0      μₖ  ] [ ŝ₂ₖ₋₄     -ĉ₂ₖ₋₄ ]   [ ωₖ₋₂     0     ηₖ ]
+            c_hat_2k_4, s_hat_2k_4, psi_k_2 = get_givens_rot(psi_bar_bar_k_1, rho_k_2)
+            theta_k_2 = c_hat_2k_4 * theta_bar_k_1 + s_hat_2k_4 * phi_k_1
+            delta_k = s_hat_2k_4 * theta_bar_k_1 - c_hat_2k_4 * phi_k_1
+            omega_k_2 = s_hat_2k_4 * mu_k
+            eta_k = -c_hat_2k_4 * mu_k
+
+            tau_k_2 = tau_bar_bar_k_1 * psi_bar_bar_k_1 / psi_k_2
+
+            # [ ψₖ₋₂     0     0  ] [ 1                ]   [ ψₖ₋₂    0         0   ]
+            # [ θₖ₋₂  ψbarₖ₋₁  δₖ ] [    ĉ₂ₖ₋₃   ŝ₂ₖ₋₃ ] = [ θₖ₋₂  ψbbarₖ₋₁    0   ]
+            # [ ωₖ₋₂     0     ηₖ ] [    ŝ₂ₖ₋₃  -ĉ₂ₖ₋₃ ]   [ ωₖ₋₂  θbarₖ₋₁   ψbarₖ ]
+            c_hat_2k_3, s_hat_2k_3, psi_bar_bar_k_1 = get_givens_rot(psi_bar_k, delta_k)
+            theta_bar_k_1 = s_hat_2k_3 * eta_k
+            psi_bar_k = -c_hat_2k_3 * eta_k
+
+            tau_bar_bar_k_1 = (xi_k - theta_k_2 * tau_k_2) / psi_bar_bar_k_1
+            xi_k = zeta_k - omega_k_2 * tau_k_2
+            tau_bar_k = (xi_k - theta_bar_k_1 * tau_bar_bar_k_1) / psi_bar_k
+
+        # Update (χ₁, ..., χₖ, χbarₖ₊₁) = (Qₖ)ᵀβ₁e₁
+        if k > 1:
+            chi_k_1 = chi_k
+        # [ cₖ  sₖ ] [ χbarₖ ] = [    χₖ   ]
+        # [ sₖ -cₖ ] [   0   ]   [ χbarₖ₊₁ ]
+        chi_k = c_k * chi_bar_k_plus_1
+        chi_bar_k_plus_1 = s_k * chi_bar_k_plus_1
+
+        # Update pₖ₊₁ = [ P̂ₖ  0 ](Qₖ)ᵀβ₁e₁
+        #               [ 0   1 ]
+        if k == 1:
+            pi_bar_k = chi_k
+        elif k == 2:
+            # [ ĉ₁   ŝ₁ ] [ π₁ ] = [ πbbar₁ ]
+            # [ ŝ₁  -ĉ₁ ] [ χ₂ ]   [ πbar₂  ]
+            pi_bar_bar_k_1 = c_hat_2k_3 * chi_k_1 + s_hat_2k_3 * chi_k
+            pi_bar_k = s_hat_2k_3 * chi_k_1 - c_hat_2k_3 * chi_k
+        else:
+            # [ ĉ₂ₖ₋₄      ŝ₂ₖ₋₄ ] [ πbbarₖ₋₂ ]   [ πₖ₋₂    ]
+            # [        1         ] [ πbarₖ₋₁  ] = [ πbarₖ₋₁ ]
+            # [ ŝ₂ₖ₋₄     -ĉ₂ₖ₋₄ ] [   χₖ     ]   [  υₖ     ]
+            upsilon_k = s_hat_2k_4 * pi_bar_bar_k_1 - c_hat_2k_4 * chi_k
+
+            # [ 1                ] [ πₖ₋₂    ]   [ πₖ₋₂     ]
+            # [    ĉ₂ₖ₋₃   ŝ₂ₖ₋₃ ] [ πbarₖ₋₁ ] = [ πbbarₖ₋₁ ]
+            # [    ŝ₂ₖ₋₃  -ĉ₂ₖ₋₃ ] [  υₖ     ]   [ πbarₖ    ]
+            pi_bar_bar_k_1 = c_hat_2k_3 * pi_bar_k + s_hat_2k_3 * upsilon_k
+            pi_bar_k = s_hat_2k_3 * pi_bar_k - c_hat_2k_3 * upsilon_k
+
+        # Update ‖rₖ‖ estimate
+        # ‖rₖ‖ = √((πₖ₋₁ - τₖ₋₁)² + (πₖ - τₖ)² + (πₖ₊₁)²)
+        if k == 1:
+            norm_r_k = norm((pi_bar_k - tau_bar_k, chi_bar_k_plus_1))
+        else:
+            norm_r_k = norm(
+                (
+                    pi_bar_bar_k_1 - tau_bar_bar_k_1,
+                    pi_bar_k - tau_bar_k,
+                    chi_bar_k_plus_1,
+                )
+            )
+
+        if callback is not None:
+            t_k = scipy.linalg.solve_triangular(
+                R[:k, :k],
+                scipy.linalg.solve_triangular(U[:k, :k], z[:k], check_finite=False),
+                check_finite=False,
+                overwrite_b=True,
+            )
+            callback(
+                x_k, t_k, k, norm_r_k, norm_Ar_k, *callback_args, **callback_kwargs
+            )
+
+    if k > k_max:
+        breakdown = "maximum number of iterations exceeded"
+    elif k == l:
+        breakdown = "beta tolerance reached"
+    elif norm_r_k <= r_tol:
+        breakdown = "residual tolerance reached"
+    elif norm_Ar_k <= Ar_tol:
+        breakdown = "A-residual tolerance reached"
+
+    return x_k, t_k, (k, norm_r_k, norm_Ar_k, breakdown)
+
+
+"""
+---------------------------------------------------------------------------------
+The following is essentially a copy of scipy's lsmr implementation.
+(https://github.com/scipy/scipy/blob/v1.17.0/scipy/sparse/linalg/_isolve/lsmr.py)
+It makes the small adjustment of introducing the option of a callback function.
+---------------------------------------------------------------------------------
+
+Copyright (C) 2010 David Fong and Michael Saunders
+
+LSMR uses an iterative method.
+
+07 Jun 2010: Documentation updated
+03 Jun 2010: First release version in Python
+
+David Chin-lung Fong            clfong@stanford.edu
+Institute for Computational and Mathematical Engineering
+Stanford University
+
+Michael Saunders                saunders@stanford.edu
+Systems Optimization Laboratory
+Dept of MS&E, Stanford University.
+
+"""
+
+from numpy import zeros, inf, atleast_1d, result_type
+from numpy.linalg import norm
+from math import sqrt
+from scipy.sparse.linalg._interface import aslinearoperator
+
+from scipy.sparse.linalg._isolve.lsqr import _sym_ortho
+
+
+def lsmr(
+    A,
+    b,
+    damp=0.0,
+    atol=1e-6,
+    btol=1e-6,
+    conlim=1e8,
+    maxiter=None,
+    show=False,
+    x0=None,
+    callback=None,
+):
+    """Iterative solver for least-squares problems.
+
+    lsmr solves the system of linear equations ``Ax = b``. If the system
+    is inconsistent, it solves the least-squares problem ``min ||b - Ax||_2``.
+    ``A`` is a rectangular matrix of dimension m-by-n, where all cases are
+    allowed: m = n, m > n, or m < n. ``b`` is a vector of length m.
+    The matrix A may be dense or sparse (usually sparse).
+
+    Parameters
+    ----------
+    A : {sparse array, ndarray, LinearOperator}
+        Matrix A in the linear system.
+        Alternatively, ``A`` can be a linear operator which can
+        produce ``Ax`` and ``A^H x`` using, e.g.,
+        ``scipy.sparse.linalg.LinearOperator``.
+    b : array_like, shape (m,)
+        Vector ``b`` in the linear system.
+    damp : float
+        Damping factor for regularized least-squares. `lsmr` solves
+        the regularized least-squares problem::
+
+         min ||(b) - (  A   )x||
+             ||(0)   (damp*I) ||_2
+
+        where damp is a scalar.  If damp is None or 0, the system
+        is solved without regularization. Default is 0.
+    atol, btol : float, optional
+        Stopping tolerances. `lsmr` continues iterations until a
+        certain backward error estimate is smaller than some quantity
+        depending on atol and btol.  Let ``r = b - Ax`` be the
+        residual vector for the current approximate solution ``x``.
+        If ``Ax = b`` seems to be consistent, `lsmr` terminates
+        when ``norm(r) <= atol * norm(A) * norm(x) + btol * norm(b)``.
+        Otherwise, `lsmr` terminates when ``norm(A^H r) <=
+        atol * norm(A) * norm(r)``.  If both tolerances are 1.0e-6 (default),
+        the final ``norm(r)`` should be accurate to about 6
+        digits. (The final ``x`` will usually have fewer correct digits,
+        depending on ``cond(A)`` and the size of LAMBDA.)  If `atol`
+        or `btol` is None, a default value of 1.0e-6 will be used.
+        Ideally, they should be estimates of the relative error in the
+        entries of ``A`` and ``b`` respectively.  For example, if the entries
+        of ``A`` have 7 correct digits, set ``atol = 1e-7``. This prevents
+        the algorithm from doing unnecessary work beyond the
+        uncertainty of the input data.
+    conlim : float, optional
+        `lsmr` terminates if an estimate of ``cond(A)`` exceeds
+        `conlim`.  For compatible systems ``Ax = b``, conlim could be
+        as large as 1.0e+12 (say).  For least-squares problems,
+        `conlim` should be less than 1.0e+8. If `conlim` is None, the
+        default value is 1e+8.  Maximum precision can be obtained by
+        setting ``atol = btol = conlim = 0``, but the number of
+        iterations may then be excessive. Default is 1e8.
+    maxiter : int, optional
+        `lsmr` terminates if the number of iterations reaches
+        `maxiter`.  The default is ``maxiter = min(m, n)``.  For
+        ill-conditioned systems, a larger value of `maxiter` may be
+        needed. Default is False.
+    show : bool, optional
+        Print iterations logs if ``show=True``. Default is False.
+    x0 : array_like, shape (n,), optional
+        Initial guess of ``x``, if None zeros are used. Default is None.
+
+        .. versionadded:: 1.0.0
+
+    Returns
+    -------
+    x : ndarray of float
+        Least-square solution returned.
+    istop : int
+        istop gives the reason for stopping::
+
+          istop   = 0 means x=0 is a solution.  If x0 was given, then x=x0 is a
+                      solution.
+                  = 1 means x is an approximate solution to A@x = B,
+                      according to atol and btol.
+                  = 2 means x approximately solves the least-squares problem
+                      according to atol.
+                  = 3 means COND(A) seems to be greater than CONLIM.
+                  = 4 is the same as 1 with atol = btol = eps (machine
+                      precision)
+                  = 5 is the same as 2 with atol = eps.
+                  = 6 is the same as 3 with CONLIM = 1/eps.
+                  = 7 means ITN reached maxiter before the other stopping
+                      conditions were satisfied.
+
+    itn : int
+        Number of iterations used.
+    normr : float
+        ``norm(b-Ax)``
+    normar : float
+        ``norm(A^H (b - Ax))``
+    norma : float
+        ``norm(A)``
+    conda : float
+        Condition number of A.
+    normx : float
+        ``norm(x)``
+
+    Notes
+    -----
+
+    .. versionadded:: 0.11.0
+
+    References
+    ----------
+    .. [1] D. C.-L. Fong and M. A. Saunders,
+           "LSMR: An iterative algorithm for sparse least-squares problems",
+           SIAM J. Sci. Comput., vol. 33, pp. 2950-2971, 2011.
+           :arxiv:`1006.0758`
+    .. [2] LSMR Software, https://web.stanford.edu/group/SOL/software/lsmr/
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> from scipy.sparse import csc_array
+    >>> from scipy.sparse.linalg import lsmr
+    >>> A = csc_array([[1., 0.], [1., 1.], [0., 1.]], dtype=float)
+
+    The first example has the trivial solution ``[0, 0]``
+
+    >>> b = np.array([0., 0., 0.], dtype=float)
+    >>> x, istop, itn, normr = lsmr(A, b)[:4]
+    >>> istop
+    0
+    >>> x
+    array([0., 0.])
+
+    The stopping code ``istop=0`` returned indicates that a vector of zeros was
+    found as a solution. The returned solution `x` indeed contains
+    ``[0., 0.]``. The next example has a non-trivial solution:
+
+    >>> b = np.array([1., 0., -1.], dtype=float)
+    >>> x, istop, itn, normr = lsmr(A, b)[:4]
+    >>> istop
+    1
+    >>> x
+    array([ 1., -1.])
+    >>> itn
+    1
+    >>> normr
+    4.440892098500627e-16
+
+    As indicated by ``istop=1``, `lsmr` found a solution obeying the tolerance
+    limits. The given solution ``[1., -1.]`` obviously solves the equation. The
+    remaining return values include information about the number of iterations
+    (`itn=1`) and the remaining difference of left and right side of the solved
+    equation.
+    The final example demonstrates the behavior in the case where there is no
+    solution for the equation:
+
+    >>> b = np.array([1., 0.01, -1.], dtype=float)
+    >>> x, istop, itn, normr = lsmr(A, b)[:4]
+    >>> istop
+    2
+    >>> x
+    array([ 1.00333333, -0.99666667])
+    >>> A.dot(x)-b
+    array([ 0.00333333, -0.00333333,  0.00333333])
+    >>> normr
+    0.005773502691896255
+
+    `istop` indicates that the system is inconsistent and thus `x` is rather an
+    approximate solution to the corresponding least-squares problem. `normr`
+    contains the minimal distance that was found.
+    """
+
+    A = aslinearoperator(A)
+    b = atleast_1d(b)
+    if b.ndim > 1:
+        b = b.squeeze()
+
+    msg = (
+        "The exact solution is x = 0, or x = x0, if x0 was given  ",
+        "Ax - b is small enough, given atol, btol                  ",
+        "The least-squares solution is good enough, given atol     ",
+        "The estimate of cond(Abar) has exceeded conlim            ",
+        "Ax - b is small enough for this machine                   ",
+        "The least-squares solution is good enough for this machine",
+        "Cond(Abar) seems to be too large for this machine         ",
+        "The iteration limit has been reached                      ",
+    )
+
+    hdg1 = "   itn      x(1)       norm r    norm Ar"
+    hdg2 = " compatible   LS      norm A   cond A"
+    pfreq = 20  # print frequency (for repeating the heading)
+    pcount = 0  # print counter
+
+    m, n = A.shape
+
+    # stores the num of singular values
+    minDim = min([m, n])
+
+    if maxiter is None:
+        maxiter = minDim
+
+    if x0 is None:
+        dtype = result_type(A, b, float)
+    else:
+        dtype = result_type(A, b, x0, float)
+
+    if show:
+        print(" ")
+        print("LSMR            Least-squares solution of  Ax = b\n")
+        print(f"The matrix A has {m} rows and {n} columns")
+        print(f"damp = {damp:20.14e}\n")
+        print(f"atol = {atol:8.2e}                 conlim = {conlim:8.2e}\n")
+        print(f"btol = {btol:8.2e}             maxiter = {maxiter:8g}\n")
+
+    u = b
+    normb = norm(b)
+    if x0 is None:
+        x = zeros(n, dtype)
+        beta = normb.copy()
+    else:
+        x = atleast_1d(x0.copy())
+        u = u - A.matvec(x)
+        beta = norm(u)
+
+    if beta > 0:
+        u = (1 / beta) * u
+        v = A.rmatvec(u)
+        alpha = norm(v)
+    else:
+        v = zeros(n, dtype)
+        alpha = 0
+
+    if alpha > 0:
+        v = (1 / alpha) * v
+
+    # Initialize variables for 1st iteration.
+
+    itn = 0
+    zetabar = alpha * beta
+    alphabar = alpha
+    rho = 1
+    rhobar = 1
+    cbar = 1
+    sbar = 0
+
+    h = v.copy()
+    hbar = zeros(n, dtype)
+
+    # Initialize variables for estimation of ||r||.
+
+    betadd = beta
+    betad = 0
+    rhodold = 1
+    tautildeold = 0
+    thetatilde = 0
+    zeta = 0
+    d = 0
+
+    # Initialize variables for estimation of ||A|| and cond(A)
+
+    normA2 = alpha * alpha
+    maxrbar = 0
+    minrbar = 1e100
+    normA = sqrt(normA2)
+    condA = 1
+    normx = 0
+
+    # Items for use in stopping rules, normb set earlier
+    istop = 0
+    ctol = 0
+    if conlim > 0:
+        ctol = 1 / conlim
+    normr = beta
+
+    # Reverse the order here from the original matlab code because
+    # there was an error on return when arnorm==0
+    normar = alpha * beta
+    if normar == 0:
+        if show:
+            print(msg[0])
+        return x, istop, itn, normr, normar, normA, condA, normx
+
+    if normb == 0:
+        x[()] = 0
+        return x, istop, itn, normr, normar, normA, condA, normx
+
+    if show:
+        print(" ")
+        print(hdg1, hdg2)
+        test1 = 1
+        test2 = alpha / beta
+        str1 = f"{itn:6g} {x[0]:12.5e}"
+        str2 = f" {normr:10.3e} {normar:10.3e}"
+        str3 = f"  {test1:8.1e} {test2:8.1e}"
+        print("".join([str1, str2, str3]))
+
+    # Main iteration loop.
+    while itn < maxiter:
+        itn = itn + 1
+
+        # Perform the next step of the bidiagonalization to obtain the
+        # next  beta, u, alpha, v.  These satisfy the relations
+        #         beta*u  =  A@v   -  alpha*u,
+        #        alpha*v  =  A'@u  -  beta*v.
+
+        u *= -alpha
+        u += A.matvec(v)
+        beta = norm(u)
+
+        if beta > 0:
+            u *= 1 / beta
+            v *= -beta
+            v += A.rmatvec(u)
+            alpha = norm(v)
+            if alpha > 0:
+                v *= 1 / alpha
+
+        # At this point, beta = beta_{k+1}, alpha = alpha_{k+1}.
+
+        # Construct rotation Qhat_{k,2k+1}.
+
+        chat, shat, alphahat = _sym_ortho(alphabar, damp)
+
+        # Use a plane rotation (Q_i) to turn B_i to R_i
+
+        rhoold = rho
+        c, s, rho = _sym_ortho(alphahat, beta)
+        thetanew = s * alpha
+        alphabar = c * alpha
+
+        # Use a plane rotation (Qbar_i) to turn R_i^T to R_i^bar
+
+        rhobarold = rhobar
+        zetaold = zeta
+        thetabar = sbar * rho
+        rhotemp = cbar * rho
+        cbar, sbar, rhobar = _sym_ortho(cbar * rho, thetanew)
+        zeta = cbar * zetabar
+        zetabar = -sbar * zetabar
+
+        # Update h, h_hat, x.
+
+        hbar *= -(thetabar * rho / (rhoold * rhobarold))
+        hbar += h
+        x += (zeta / (rho * rhobar)) * hbar
+        h *= -(thetanew / rho)
+        h += v
+
+        if callback is not None:
+            callback(x)
+
+        # Estimate of ||r||.
+
+        # Apply rotation Qhat_{k,2k+1}.
+        betaacute = chat * betadd
+        betacheck = -shat * betadd
+
+        # Apply rotation Q_{k,k+1}.
+        betahat = c * betaacute
+        betadd = -s * betaacute
+
+        # Apply rotation Qtilde_{k-1}.
+        # betad = betad_{k-1} here.
+
+        thetatildeold = thetatilde
+        ctildeold, stildeold, rhotildeold = _sym_ortho(rhodold, thetabar)
+        thetatilde = stildeold * rhobar
+        rhodold = ctildeold * rhobar
+        betad = -stildeold * betad + ctildeold * betahat
+
+        # betad   = betad_k here.
+        # rhodold = rhod_k  here.
+
+        tautildeold = (zetaold - thetatildeold * tautildeold) / rhotildeold
+        taud = (zeta - thetatilde * tautildeold) / rhodold
+        d = d + betacheck * betacheck
+        normr = sqrt(d + (betad - taud) ** 2 + betadd * betadd)
+
+        # Estimate ||A||.
+        normA2 = normA2 + beta * beta
+        normA = sqrt(normA2)
+        normA2 = normA2 + alpha * alpha
+
+        # Estimate cond(A).
+        maxrbar = max(maxrbar, rhobarold)
+        if itn > 1:
+            minrbar = min(minrbar, rhobarold)
+        condA = max(maxrbar, rhotemp) / min(minrbar, rhotemp)
+
+        # Test for convergence.
+
+        # Compute norms for convergence testing.
+        normar = abs(zetabar)
+        normx = norm(x)
+
+        # Now use these norms to estimate certain other quantities,
+        # some of which will be small near a solution.
+
+        test1 = normr / normb
+        if (normA * normr) != 0:
+            test2 = normar / (normA * normr)
+        else:
+            test2 = inf
+        test3 = 1 / condA
+        t1 = test1 / (1 + normA * normx / normb)
+        rtol = btol + atol * normA * normx / normb
+
+        # The following tests guard against extremely small values of
+        # atol, btol or ctol.  (The user may have set any or all of
+        # the parameters atol, btol, conlim  to 0.)
+        # The effect is equivalent to the normAl tests using
+        # atol = eps,  btol = eps,  conlim = 1/eps.
+
+        if itn >= maxiter:
+            istop = 7
+        if 1 + test3 <= 1:
+            istop = 6
+        if 1 + test2 <= 1:
+            istop = 5
+        if 1 + t1 <= 1:
+            istop = 4
+
+        # Allow for tolerances set by the user.
+
+        if test3 <= ctol:
+            istop = 3
+        if test2 <= atol:
+            istop = 2
+        if test1 <= rtol:
+            istop = 1
+
+        # See if it is time to print something.
+
+        if show:
+            if (
+                (n <= 40)
+                or (itn <= 10)
+                or (itn >= maxiter - 10)
+                or (itn % 10 == 0)
+                or (test3 <= 1.1 * ctol)
+                or (test2 <= 1.1 * atol)
+                or (test1 <= 1.1 * rtol)
+                or (istop != 0)
+            ):
+                if pcount >= pfreq:
+                    pcount = 0
+                    print(" ")
+                    print(hdg1, hdg2)
+                pcount = pcount + 1
+                str1 = f"{itn:6g} {x[0]:12.5e}"
+                str2 = f" {normr:10.3e} {normar:10.3e}"
+                str3 = f"  {test1:8.1e} {test2:8.1e}"
+                str4 = f" {normA:8.1e} {condA:8.1e}"
+                print("".join([str1, str2, str3, str4]))
+
+        if istop > 0:
+            break
+
+    # Print the stopping condition.
+
+    if show:
+        print(" ")
+        print("LSMR finished")
+        print(msg[istop])
+        print(f"istop ={istop:8g}    normr ={normr:8.1e}")
+        print(f"    normA ={normA:8.1e}    normAr ={normar:8.1e}")
+        print(f"itn   ={itn:8g}    condA ={condA:8.1e}")
+        print(f"    normx ={normx:8.1e}")
+        print(str1, str2)
+        print(str3, str4)
+
+    return x, istop, itn, normr, normar, normA, condA, normx
+
+
+"""
+---------------------------------------------------------------------------------
+The following is essentially a copy of scipy's lsqr implementation.
+(https://github.com/scipy/scipy/blob/v1.17.0/scipy/sparse/linalg/_isolve/lsqr.py)
+It makes the small adjustment of introducing the option of a callback function.
+---------------------------------------------------------------------------------
+
+Sparse Equations and Least Squares.
+
+The original Fortran code was written by C. C. Paige and M. A. Saunders as
+described in
+
+C. C. Paige and M. A. Saunders, LSQR: An algorithm for sparse linear
+equations and sparse least squares, TOMS 8(1), 43--71 (1982).
+
+C. C. Paige and M. A. Saunders, Algorithm 583; LSQR: Sparse linear
+equations and least-squares problems, TOMS 8(2), 195--209 (1982).
+
+It is licensed under the following BSD license:
+
+Copyright (c) 2006, Systems Optimization Laboratory
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are
+met:
+
+    * Redistributions of source code must retain the above copyright
+      notice, this list of conditions and the following disclaimer.
+
+    * Redistributions in binary form must reproduce the above
+      copyright notice, this list of conditions and the following
+      disclaimer in the documentation and/or other materials provided
+      with the distribution.
+
+    * Neither the name of Stanford University nor the names of its
+      contributors may be used to endorse or promote products derived
+      from this software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+"AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
+OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
+LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+The Fortran code was translated to Python for use in CVXOPT by Jeffery
+Kline with contributions by Mridul Aanjaneya and Bob Myhill.
+
+Adapted for SciPy by Stefan van der Walt.
+
+"""
+
+import numpy as np
+from math import sqrt
+from scipy.sparse.linalg._interface import aslinearoperator
+from scipy.sparse._sputils import convert_pydata_sparse_to_scipy
+
+eps = np.finfo(np.float64).eps
+
+
+def _sym_ortho(a, b):
+    """
+    Stable implementation of Givens rotation.
+
+    Notes
+    -----
+    The routine 'SymOrtho' was added for numerical stability. This is
+    recommended by S.-C. Choi in [1]_.  It removes the unpleasant potential of
+    ``1/eps`` in some important places (see, for example text following
+    "Compute the next plane rotation Qk" in minres.py).
+
+    References
+    ----------
+    .. [1] S.-C. Choi, "Iterative Methods for Singular Linear Equations
+           and Least-Squares Problems", Dissertation,
+           http://www.stanford.edu/group/SOL/dissertations/sou-cheng-choi-thesis.pdf
+
+    """
+    if b == 0:
+        return np.sign(a), 0, abs(a)
+    elif a == 0:
+        return 0, np.sign(b), abs(b)
+    elif abs(b) > abs(a):
+        tau = a / b
+        s = np.sign(b) / sqrt(1 + tau * tau)
+        c = s * tau
+        r = b / s
+    else:
+        tau = b / a
+        c = np.sign(a) / sqrt(1 + tau * tau)
+        s = c * tau
+        r = a / c
+    return c, s, r
+
+
+def lsqr(
+    A,
+    b,
+    damp=0.0,
+    atol=1e-6,
+    btol=1e-6,
+    conlim=1e8,
+    iter_lim=None,
+    show=False,
+    calc_var=False,
+    x0=None,
+    callback=None,
+):
+    """Find the least-squares solution to a large, sparse, linear system
+    of equations.
+
+    The function solves ``Ax = b``  or  ``min ||Ax - b||^2`` or
+    ``min ||Ax - b||^2 + d^2 ||x - x0||^2``.
+
+    The matrix A may be square or rectangular (over-determined or
+    under-determined), and may have any rank.
+
+    ::
+
+      1. Unsymmetric equations --    solve  Ax = b
+
+      2. Linear least squares  --    solve  Ax = b
+                                     in the least-squares sense
+
+      3. Damped least squares  --    solve  (   A    )*x = (    b    )
+                                            ( damp*I )     ( damp*x0 )
+                                     in the least-squares sense
+
+    Parameters
+    ----------
+    A : {sparse array, ndarray, LinearOperator}
+        Representation of an m-by-n matrix.
+        Alternatively, ``A`` can be a linear operator which can
+        produce ``Ax`` and ``A^T x`` using, e.g.,
+        ``scipy.sparse.linalg.LinearOperator``.
+    b : array_like, shape (m,)
+        Right-hand side vector ``b``.
+    damp : float
+        Damping coefficient. Default is 0.
+    atol, btol : float, optional
+        Stopping tolerances. `lsqr` continues iterations until a
+        certain backward error estimate is smaller than some quantity
+        depending on atol and btol.  Let ``r = b - Ax`` be the
+        residual vector for the current approximate solution ``x``.
+        If ``Ax = b`` seems to be consistent, `lsqr` terminates
+        when ``norm(r) <= atol * norm(A) * norm(x) + btol * norm(b)``.
+        Otherwise, `lsqr` terminates when ``norm(A^H r) <=
+        atol * norm(A) * norm(r)``.  If both tolerances are 1.0e-6 (default),
+        the final ``norm(r)`` should be accurate to about 6
+        digits. (The final ``x`` will usually have fewer correct digits,
+        depending on ``cond(A)`` and the size of LAMBDA.)  If `atol`
+        or `btol` is None, a default value of 1.0e-6 will be used.
+        Ideally, they should be estimates of the relative error in the
+        entries of ``A`` and ``b`` respectively.  For example, if the entries
+        of ``A`` have 7 correct digits, set ``atol = 1e-7``. This prevents
+        the algorithm from doing unnecessary work beyond the
+        uncertainty of the input data.
+    conlim : float, optional
+        Another stopping tolerance.  lsqr terminates if an estimate of
+        ``cond(A)`` exceeds `conlim`.  For compatible systems ``Ax =
+        b``, `conlim` could be as large as 1.0e+12 (say).  For
+        least-squares problems, conlim should be less than 1.0e+8.
+        Maximum precision can be obtained by setting ``atol = btol =
+        conlim = zero``, but the number of iterations may then be
+        excessive. Default is 1e8.
+    iter_lim : int, optional
+        Explicit limitation on number of iterations (for safety).
+    show : bool, optional
+        Display an iteration log. Default is False.
+    calc_var : bool, optional
+        Whether to estimate diagonals of ``(A'A + damp^2*I)^{-1}``.
+    x0 : array_like, shape (n,), optional
+        Initial guess of x, if None zeros are used. Default is None.
+
+        .. versionadded:: 1.0.0
+
+    Returns
+    -------
+    x : ndarray of float
+        The final solution.
+    istop : int
+        Gives the reason for termination.
+        1 means x is an approximate solution to Ax = b.
+        2 means x approximately solves the least-squares problem.
+    itn : int
+        Iteration number upon termination.
+    r1norm : float
+        ``norm(r)``, where ``r = b - Ax``.
+    r2norm : float
+        ``sqrt( norm(r)^2  +  damp^2 * norm(x - x0)^2 )``.  Equal to `r1norm`
+        if ``damp == 0``.
+    anorm : float
+        Estimate of Frobenius norm of ``Abar = [[A]; [damp*I]]``.
+    acond : float
+        Estimate of ``cond(Abar)``.
+    arnorm : float
+        Estimate of ``norm(A'@r - damp^2*(x - x0))``.
+    xnorm : float
+        ``norm(x)``
+    var : ndarray of float
+        If ``calc_var`` is True, estimates all diagonals of
+        ``(A'A)^{-1}`` (if ``damp == 0``) or more generally ``(A'A +
+        damp^2*I)^{-1}``.  This is well defined if A has full column
+        rank or ``damp > 0``.  (Not sure what var means if ``rank(A)
+        < n`` and ``damp = 0.``)
+
+    Notes
+    -----
+    LSQR uses an iterative method to approximate the solution.  The
+    number of iterations required to reach a certain accuracy depends
+    strongly on the scaling of the problem.  Poor scaling of the rows
+    or columns of A should therefore be avoided where possible.
+
+    For example, in problem 1 the solution is unaltered by
+    row-scaling.  If a row of A is very small or large compared to
+    the other rows of A, the corresponding row of ( A  b ) should be
+    scaled up or down.
+
+    In problems 1 and 2, the solution x is easily recovered
+    following column-scaling.  Unless better information is known,
+    the nonzero columns of A should be scaled so that they all have
+    the same Euclidean norm (e.g., 1.0).
+
+    In problem 3, there is no freedom to re-scale if damp is
+    nonzero.  However, the value of damp should be assigned only
+    after attention has been paid to the scaling of A.
+
+    The parameter damp is intended to help regularize
+    ill-conditioned systems, by preventing the true solution from
+    being very large.  Another aid to regularization is provided by
+    the parameter acond, which may be used to terminate iterations
+    before the computed solution becomes very large.
+
+    If some initial estimate ``x0`` is known and if ``damp == 0``,
+    one could proceed as follows:
+
+      1. Compute a residual vector ``r0 = b - A@x0``.
+      2. Use LSQR to solve the system  ``A@dx = r0``.
+      3. Add the correction dx to obtain a final solution ``x = x0 + dx``.
+
+    This requires that ``x0`` be available before and after the call
+    to LSQR.  To judge the benefits, suppose LSQR takes k1 iterations
+    to solve A@x = b and k2 iterations to solve A@dx = r0.
+    If x0 is "good", norm(r0) will be smaller than norm(b).
+    If the same stopping tolerances atol and btol are used for each
+    system, k1 and k2 will be similar, but the final solution x0 + dx
+    should be more accurate.  The only way to reduce the total work
+    is to use a larger stopping tolerance for the second system.
+    If some value btol is suitable for A@x = b, the larger value
+    btol*norm(b)/norm(r0)  should be suitable for A@dx = r0.
+
+    Preconditioning is another way to reduce the number of iterations.
+    If it is possible to solve a related system ``M@x = b``
+    efficiently, where M approximates A in some helpful way (e.g. M -
+    A has low rank or its elements are small relative to those of A),
+    LSQR may converge more rapidly on the system ``A@M(inverse)@z =
+    b``, after which x can be recovered by solving M@x = z.
+
+    If A is symmetric, LSQR should not be used!
+
+    Alternatives are the symmetric conjugate-gradient method (cg)
+    and/or SYMMLQ.  SYMMLQ is an implementation of symmetric cg that
+    applies to any symmetric A and will converge more rapidly than
+    LSQR.  If A is positive definite, there are other implementations
+    of symmetric cg that require slightly less work per iteration than
+    SYMMLQ (but will take the same number of iterations).
+
+    References
+    ----------
+    .. [1] C. C. Paige and M. A. Saunders (1982a).
+           "LSQR: An algorithm for sparse linear equations and
+           sparse least squares", ACM TOMS 8(1), 43-71.
+    .. [2] C. C. Paige and M. A. Saunders (1982b).
+           "Algorithm 583.  LSQR: Sparse linear equations and least
+           squares problems", ACM TOMS 8(2), 195-209.
+    .. [3] M. A. Saunders (1995).  "Solution of sparse rectangular
+           systems using LSQR and CRAIG", BIT 35, 588-604.
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> from scipy.sparse import csc_array
+    >>> from scipy.sparse.linalg import lsqr
+    >>> A = csc_array([[1., 0.], [1., 1.], [0., 1.]], dtype=float)
+
+    The first example has the trivial solution ``[0, 0]``
+
+    >>> b = np.array([0., 0., 0.], dtype=float)
+    >>> x, istop, itn, normr = lsqr(A, b)[:4]
+    >>> istop
+    0
+    >>> x
+    array([ 0.,  0.])
+
+    The stopping code ``istop=0`` returned indicates that a vector of zeros was
+    found as a solution. The returned solution `x` indeed contains
+    ``[0., 0.]``. The next example has a non-trivial solution:
+
+    >>> b = np.array([1., 0., -1.], dtype=float)
+    >>> x, istop, itn, r1norm = lsqr(A, b)[:4]
+    >>> istop
+    1
+    >>> x
+    array([ 1., -1.])
+    >>> itn
+    1
+    >>> r1norm
+    4.440892098500627e-16
+
+    As indicated by ``istop=1``, `lsqr` found a solution obeying the tolerance
+    limits. The given solution ``[1., -1.]`` obviously solves the equation. The
+    remaining return values include information about the number of iterations
+    (`itn=1`) and the remaining difference of left and right side of the solved
+    equation.
+    The final example demonstrates the behavior in the case where there is no
+    solution for the equation:
+
+    >>> b = np.array([1., 0.01, -1.], dtype=float)
+    >>> x, istop, itn, r1norm = lsqr(A, b)[:4]
+    >>> istop
+    2
+    >>> x
+    array([ 1.00333333, -0.99666667])
+    >>> A.dot(x)-b
+    array([ 0.00333333, -0.00333333,  0.00333333])
+    >>> r1norm
+    0.005773502691896255
+
+    `istop` indicates that the system is inconsistent and thus `x` is rather an
+    approximate solution to the corresponding least-squares problem. `r1norm`
+    contains the norm of the minimal residual that was found.
+    """
+    A = convert_pydata_sparse_to_scipy(A)
+    A = aslinearoperator(A)
+    b = np.atleast_1d(b)
+    if b.ndim > 1:
+        b = b.squeeze()
+
+    m, n = A.shape
+    if iter_lim is None:
+        iter_lim = 2 * n
+    var = np.zeros(n)
+
+    msg = (
+        "The exact solution is  x = 0                              ",
+        "Ax - b is small enough, given atol, btol                  ",
+        "The least-squares solution is good enough, given atol     ",
+        "The estimate of cond(Abar) has exceeded conlim            ",
+        "Ax - b is small enough for this machine                   ",
+        "The least-squares solution is good enough for this machine",
+        "Cond(Abar) seems to be too large for this machine         ",
+        "The iteration limit has been reached                      ",
+    )
+
+    if show:
+        print(" ")
+        print("LSQR            Least-squares solution of  Ax = b")
+        str1 = f"The matrix A has {m} rows and {n} columns"
+        str2 = f"damp = {damp:20.14e}   calc_var = {calc_var:8g}"
+        str3 = f"atol = {atol:8.2e}                 conlim = {conlim:8.2e}"
+        str4 = f"btol = {btol:8.2e}               iter_lim = {iter_lim:8g}"
+        print(str1)
+        print(str2)
+        print(str3)
+        print(str4)
+
+    itn = 0
+    istop = 0
+    ctol = 0
+    if conlim > 0:
+        ctol = 1 / conlim
+    anorm = 0
+    acond = 0
+    dampsq = damp**2
+    ddnorm = 0
+    res2 = 0
+    xnorm = 0
+    xxnorm = 0
+    z = 0
+    cs2 = -1
+    sn2 = 0
+
+    # Set up the first vectors u and v for the bidiagonalization.
+    # These satisfy  beta*u = b - A@x,  alfa*v = A'@u.
+    u = b
+    bnorm = np.linalg.norm(b)
+
+    if x0 is None:
+        x = np.zeros(n)
+        beta = bnorm.copy()
+    else:
+        x = np.asarray(x0)
+        u = u - A.matvec(x)
+        beta = np.linalg.norm(u)
+
+    if beta > 0:
+        u = (1 / beta) * u
+        v = A.rmatvec(u)
+        alfa = np.linalg.norm(v)
+    else:
+        v = x.copy()
+        alfa = 0
+
+    if alfa > 0:
+        v = (1 / alfa) * v
+    w = v.copy()
+
+    rhobar = alfa
+    phibar = beta
+    rnorm = beta
+    r1norm = rnorm
+    r2norm = rnorm
+
+    # Reverse the order here from the original matlab code because
+    # there was an error on return when arnorm==0
+    arnorm = alfa * beta
+    if arnorm == 0:
+        if show:
+            print(msg[0])
+        return x, istop, itn, r1norm, r2norm, anorm, acond, arnorm, xnorm, var
+
+    head1 = "   Itn      x[0]       r1norm     r2norm "
+    head2 = " Compatible    LS      Norm A   Cond A"
+
+    if show:
+        print(" ")
+        print(head1, head2)
+        test1 = 1
+        test2 = alfa / beta
+        str1 = f"{itn:6g} {x[0]:12.5e}"
+        str2 = f" {r1norm:10.3e} {r2norm:10.3e}"
+        str3 = f"  {test1:8.1e} {test2:8.1e}"
+        print(str1, str2, str3)
+
+    # Main iteration loop.
+    while itn < iter_lim:
+        itn = itn + 1
+        # Perform the next step of the bidiagonalization to obtain the
+        # next  beta, u, alfa, v. These satisfy the relations
+        #     beta*u  =  a@v   -  alfa*u,
+        #     alfa*v  =  A'@u  -  beta*v.
+        u = A.matvec(v) - alfa * u
+        beta = np.linalg.norm(u)
+
+        if beta > 0:
+            u = (1 / beta) * u
+            anorm = sqrt(anorm**2 + alfa**2 + beta**2 + dampsq)
+            v = A.rmatvec(u) - beta * v
+            alfa = np.linalg.norm(v)
+            if alfa > 0:
+                v = (1 / alfa) * v
+
+        # Use a plane rotation to eliminate the damping parameter.
+        # This alters the diagonal (rhobar) of the lower-bidiagonal matrix.
+        if damp > 0:
+            rhobar1 = sqrt(rhobar**2 + dampsq)
+            cs1 = rhobar / rhobar1
+            sn1 = damp / rhobar1
+            psi = sn1 * phibar
+            phibar = cs1 * phibar
+        else:
+            # cs1 = 1 and sn1 = 0
+            rhobar1 = rhobar
+            psi = 0.0
+
+        # Use a plane rotation to eliminate the subdiagonal element (beta)
+        # of the lower-bidiagonal matrix, giving an upper-bidiagonal matrix.
+        cs, sn, rho = _sym_ortho(rhobar1, beta)
+
+        theta = sn * alfa
+        rhobar = -cs * alfa
+        phi = cs * phibar
+        phibar = sn * phibar
+        tau = sn * phi
+
+        # Update x and w.
+        t1 = phi / rho
+        t2 = -theta / rho
+        dk = (1 / rho) * w
+
+        x = x + t1 * w
+        w = v + t2 * w
+        ddnorm = ddnorm + np.linalg.norm(dk) ** 2
+
+        if callback is not None:
+            callback(x)
+
+        if calc_var:
+            var = var + dk**2
+
+        # Use a plane rotation on the right to eliminate the
+        # super-diagonal element (theta) of the upper-bidiagonal matrix.
+        # Then use the result to estimate norm(x).
+        delta = sn2 * rho
+        gambar = -cs2 * rho
+        rhs = phi - delta * z
+        zbar = rhs / gambar
+        xnorm = sqrt(xxnorm + zbar**2)
+        gamma = sqrt(gambar**2 + theta**2)
+        cs2 = gambar / gamma
+        sn2 = theta / gamma
+        z = rhs / gamma
+        xxnorm = xxnorm + z**2
+
+        # Test for convergence.
+        # First, estimate the condition of the matrix  Abar,
+        # and the norms of  rbar  and  Abar'rbar.
+        acond = anorm * sqrt(ddnorm)
+        res1 = phibar**2
+        res2 = res2 + psi**2
+        rnorm = sqrt(res1 + res2)
+        arnorm = alfa * abs(tau)
+
+        # Distinguish between
+        #    r1norm = ||b - Ax|| and
+        #    r2norm = rnorm in current code
+        #           = sqrt(r1norm^2 + damp^2*||x - x0||^2).
+        #    Estimate r1norm from
+        #    r1norm = sqrt(r2norm^2 - damp^2*||x - x0||^2).
+        # Although there is cancellation, it might be accurate enough.
+        if damp > 0:
+            r1sq = rnorm**2 - dampsq * xxnorm
+            r1norm = sqrt(abs(r1sq))
+            if r1sq < 0:
+                r1norm = -r1norm
+        else:
+            r1norm = rnorm
+        r2norm = rnorm
+
+        # Now use these norms to estimate certain other quantities,
+        # some of which will be small near a solution.
+        test1 = rnorm / bnorm
+        test2 = arnorm / (anorm * rnorm + eps)
+        test3 = 1 / (acond + eps)
+        t1 = test1 / (1 + anorm * xnorm / bnorm)
+        rtol = btol + atol * anorm * xnorm / bnorm
+
+        # The following tests guard against extremely small values of
+        # atol, btol  or  ctol.  (The user may have set any or all of
+        # the parameters  atol, btol, conlim  to 0.)
+        # The effect is equivalent to the normal tests using
+        # atol = eps,  btol = eps,  conlim = 1/eps.
+        if itn >= iter_lim:
+            istop = 7
+        if 1 + test3 <= 1:
+            istop = 6
+        if 1 + test2 <= 1:
+            istop = 5
+        if 1 + t1 <= 1:
+            istop = 4
+
+        # Allow for tolerances set by the user.
+        if test3 <= ctol:
+            istop = 3
+        if test2 <= atol:
+            istop = 2
+        if test1 <= rtol:
+            istop = 1
+
+        if show:
+            # See if it is time to print something.
+            prnt = False
+            if n <= 40:
+                prnt = True
+            if itn <= 10:
+                prnt = True
+            if itn >= iter_lim - 10:
+                prnt = True
+            # if itn%10 == 0: prnt = True
+            if test3 <= 2 * ctol:
+                prnt = True
+            if test2 <= 10 * atol:
+                prnt = True
+            if test1 <= 10 * rtol:
+                prnt = True
+            if istop != 0:
+                prnt = True
+
+            if prnt:
+                str1 = f"{itn:6g} {x[0]:12.5e}"
+                str2 = f" {r1norm:10.3e} {r2norm:10.3e}"
+                str3 = f"  {test1:8.1e} {test2:8.1e}"
+                str4 = f" {anorm:8.1e} {acond:8.1e}"
+                print(str1, str2, str3, str4)
+
+        if istop != 0:
+            break
+
+    # End of iteration loop.
+    # Print the stopping condition.
+    if show:
+        print(" ")
+        print("LSQR finished")
+        print(msg[istop])
+        print(" ")
+        str1 = f"istop ={istop:8g}   r1norm ={r1norm:8.1e}"
+        str2 = f"anorm ={anorm:8.1e}   arnorm ={arnorm:8.1e}"
+        str3 = f"itn   ={itn:8g}   r2norm ={r2norm:8.1e}"
+        str4 = f"acond ={acond:8.1e}   xnorm  ={xnorm:8.1e}"
+        print(str1 + "   " + str2)
+        print(str3 + "   " + str4)
+        print(" ")
+
+    return x, istop, itn, r1norm, r2norm, anorm, acond, arnorm, xnorm, var
