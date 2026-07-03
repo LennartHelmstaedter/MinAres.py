@@ -5,8 +5,8 @@ import scipy.sparse as sps
 import scipy
 
 from MinAres import MinAres
-from numerical_experiments.adapted_methods import lsmr
-from numerical_experiments.adapted_methods import lsqr
+from numerical_experiments.lsmr_lsqr import lsmr
+from numerical_experiments.lsmr_lsqr import lsqr
 from numerical_experiments.util import optimal_backward_error_fro
 
 

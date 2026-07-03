@@ -2,7 +2,7 @@ import numpy as np
 from numpy.linalg import norm
 import matplotlib.pyplot as plt
 
-from numerical_experiments.adapted_methods import MinAres_TV
+from numerical_experiments.MinAres_adapted_versions import MinAres_TV
 
 
 plt.rcParams.update(

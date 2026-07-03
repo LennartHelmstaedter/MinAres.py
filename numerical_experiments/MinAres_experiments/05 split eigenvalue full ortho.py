@@ -2,7 +2,7 @@ import numpy as np
 from numpy.linalg import norm
 import matplotlib.pyplot as plt
 
-from numerical_experiments.adapted_methods import MinAres_full_ortho
+from numerical_experiments.MinAres_adapted_versions import MinAres_full_ortho
 from numerical_experiments.util import optimal_backward_error_fro
 
 
