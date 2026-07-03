@@ -154,25 +154,38 @@ def gmaHres_I(
     breakdown = "maximum number of iterations exceeded"
 
     for k in range(maxiter):
-        # Arnoldi method
+        # Continue the Arnoldi process.
+        # AVₖ = Vₖ₊₁Hₖ₊₁.ₖ
+        #                     k
+        # hₖ₊₁.ₖvₖ₊₁ = Avₖ -  ∑ hⱼₖ vⱼ
+        #                    j=1
         V[:, k + 1] = A @ V[:, k]
         for j in range(k + 1):
             H[j, k] = np.vdot(V[:, j], V[:, k + 1])
             V[:, k + 1] -= H[j, k] * V[:, j]
-
         H[k + 1, k] = norm(V[:, k + 1])
+        # Detection of early termination
         if np.isclose(H[k + 1, k], 0, atol=arnoldi_tol):
             breakdown = "arnoldi_tolerance reached"
         else:
             V[:, k + 1] /= H[k + 1, k]
 
-        # QR factorization of $H_{k+1,k}$
+        # Update the QR factorization Hₖ₊₁.ₖ = Qₖ [ Uₖ ].
+        #                                         [ 0  ]
+        # Apply the previous Givens reflections to the last column
+        # [  u₁ₖ   ]       [  h₁₁   ]
+        # [   •    ] = Qₖᴴ [   •    ]
+        # [ uₖ₋₁.ₖ ]       [ hₖ₋₁.ₖ ]
+        # [  u°ₖₖ  ]       [  hₖₖ   ]
         for j in range(k):
             H[j : (j + 2), k] = (
                 np.array([[c[j], np.conj(s[j])], [s[j], -np.conj(c[j])]]).conj().T
                 @ H[j : (j + 2), k]
             )
 
+        # Compute and apply current Givens reflection
+        # [ c̅ₖ   s̅ₖ ] [  u°ₖₖ  ] = [ uₖₖ ]
+        # [ sₖ  -cₖ ] [ hₖ₊₁.ₖ ]   [  0  ]
         _c, _s, H[k, k] = get_givens_rot(H[k, k], H[k + 1, k])
         c.append(_c)
         s.append(_s)
@@ -181,25 +194,39 @@ def gmaHres_I(
         if breakdown == "arnoldi_tolerance reached":
             break
 
-        # Gram–Schmidt
+        # Continue the Gram–Schmidt process.
+        # AᴴVₖ₊₁ = Wₖ₊₁Rₖ₊₁
+        #                         k
+        # rₖ₊₁.₊₁wₖ₊₁ = Aᴴvₖ₊₁ -  ∑ rⱼₖ wⱼ
+        #                        j=1
         W[:, k + 1] = A.conj().T @ V[:, k + 1]
         for j in range(k + 1):
             R[j, k + 1] = np.vdot(W[:, j], W[:, k + 1])
             W[:, k + 1] -= R[j, k + 1] * W[:, j]
-
         R[k + 1, k + 1] = norm(W[:, k + 1])
+        # Detection of early termination
         if np.isclose(R[k + 1, k + 1], 0, atol=gram_schmidt_tol):
             breakdown = "gram_schmidt_tolerance reached"
         else:
             W[:, k + 1] /= R[k + 1, k + 1]
 
-        # Computation of $\widetilde{H}_{k+1,k}$
+        # Compute H̃ₖ₊₁.ₖ by applying the Givens rotations from the right
+        # [  h̃₁ₖ    h̃°₁.ₖ₊₁   ]   [ h̃°₁ₖ   r₁.ₖ₊₁  ]
+        # [   •         •     ] = [  •        •    ]
+        # [  h̃ₖₖ    h̃°ₖ.ₖ₊₁   ]   [ h̃°ₖₖ   rₖ.ₖ₊₁  ]
+        # [ h̃ₖ₊₁.ₖ  h̃°ₖ₊₁.ₖ₊₁ ]   [  0    rₖ₊₁.ₖ₊₁ ]
         R[: (k + 2), k : (k + 2)] = R[: (k + 2), k : (k + 2)] @ np.array(
             [[c[k], np.conj(s[k])], [s[k], -np.conj(c[k])]]
         )
-        # Now, H_tilde = R[:k+2, :k+1]
 
-        # QR factorization of \widetilde{H}_{k+1,k}
+        # Update the QR factorization H̃ₖ₊₁.ₖ = Qₖ [ Ũₖ ].
+        #                                         [ 0  ]
+        #
+        # Apply the previous Givens reflections to the last column
+        # [  ũ₁ₖ   ]       [  h̃₁₁   ]
+        # [   •    ] = Q̃ₖᴴ [   •    ]
+        # [ ũₖ₋₁.ₖ ]       [ h̃ₖ₋₁.ₖ ]
+        # [  ũ°ₖₖ  ]       [  h̃ₖₖ   ]
         for j in range(k):
             R[j : (j + 2), k] = (
                 np.array(
@@ -213,12 +240,17 @@ def gmaHres_I(
                 @ R[j : (j + 2), k]
             )
 
+        # Compute and apply current Givens reflection
+        # [ c̃̅ₖ   s̅̃ₖ ] [  ũ°ₖₖ  ] = [ ũₖₖ ]
+        # [ s̃ₖ  -c̃ₖ ] [ h̃ₖ₊₁.ₖ ]   [  0  ]
         _c, _s, R[k, k] = get_givens_rot(R[k, k], R[k + 1, k])
         c_tilde.append(_c)
         s_tilde.append(_s)
         R[k + 1, k] = 0
 
-        # Computation of z_k
+        # Update zₖ = Q̃ₖ₊₁ᴴ (r₁₁ β e₁)
+        # [ c̃̅ₖ   s̅̃ₖ ] [ ζ°ₖ ] = [  ζₖ   ]
+        # [ s̃ₖ  -c̃ₖ ] [  0  ]   [ ζ°ₖ₊₁ ]
         z[k : (k + 2)] = (
             np.array(
                 [[c_tilde[k], np.conj(s_tilde[k])], [s_tilde[k], -np.conj(c_tilde[k])]]
@@ -237,36 +269,47 @@ def gmaHres_I(
             if callback_type == "norm_aHr":
                 callback(k + 1, norm_aHr, *callback_args, **callback_kwargs)
             elif callback_type == "x":
-                # Solve triangular systems and find x_k
+                # Solve triangular systems and find xₖ
+                # Compute tₖ = Uₖ⁻¹ Ũₖ⁻¹ zₖ
                 t = sp.linalg.solve_triangular(
                     R[: (k + 1), : (k + 1)], z[: (k + 1)], check_finite=False
                 )
                 t = sp.linalg.solve_triangular(
                     H[: (k + 1), : (k + 1)], t, check_finite=False, overwrite_b=True
                 )
+                # Compute xₖ = Vₖ tₖ
                 x = V[:, : (k + 1)] @ t
 
                 callback(x, k + 1, norm_aHr, *callback_args, **callback_kwargs)
 
     if breakdown == "arnoldi_tolerance reached":
         if np.isclose(H[k, k], 0, atol=arnoldi_tol):
-            # The problem is singular. This only happens when b does not have finite
+            # The matrix Uₖ is singular. This only happens when b does not have finite
             # least squares grade with respect to A. Among the minimizers in the Krylov
             # subspace, we compute that with minimum norm.
+            #
+            # tₖ = [ p - γ q ]
+            #      [    γ    ]
+            # Here, with p = Uₖ₋₁⁻¹ Ũₖ₋₁⁻¹ zₖ₋₁, q = Uₖ₋₁⁻¹ u, u is the last column of Uₖ
+            # and γ = qᴴp / ( 1 + ‖q‖² )
 
-            a = sp.linalg.solve_triangular(R[:k, :k], z[:k], check_finite=False)
-            a = sp.linalg.solve_triangular(
-                H[:k, :k], a, check_finite=False, overwrite_b=True
+            p = sp.linalg.solve_triangular(R[:k, :k], z[:k], check_finite=False)
+            p = sp.linalg.solve_triangular(
+                H[:k, :k], p, check_finite=False, overwrite_b=True
             )
-            b = sp.linalg.solve_triangular(H[:k, :k], H[:k, k], check_finite=False)
-            alpha = np.vdot(b, a) / (1 + np.real(np.vdot(b, b)))
+            q = sp.linalg.solve_triangular(H[:k, :k], H[:k, k], check_finite=False)
+            gamma = np.vdot(q, p) / (1 + np.real(np.vdot(q, q)))
 
-            t = np.append(a - alpha * b, alpha)
+            t = np.append(p - gamma * q, gamma)
 
+            # Compute xₖ = Vₖ tₖ
             x = V[:, : (k + 1)] @ t
 
             norm_aHr = np.abs(z[k])
         else:
+            # Solve the linear system Uₖ tₖ = Qₖᴴ(β e₁)
+            #
+            # Compute Qₖᴴ(β e₁)
             beta_e_1 = np.zeros(k + 2, dtype=dtype)
             beta_e_1[0] = beta
 
@@ -276,9 +319,12 @@ def gmaHres_I(
                     @ beta_e_1[j : (j + 2)]
                 )
 
+            # Solve Uₖ⁻¹ Qₖᴴ(β e₁)
             t = sp.linalg.solve_triangular(
                 H[: (k + 1), : (k + 1)], beta_e_1[: (k + 1)], check_finite=False
             )
+
+            # Compute xₖ = Vₖ tₖ
             x = V[:, : (k + 1)] @ t
 
             norm_aHr = 0.0
@@ -307,13 +353,15 @@ def gmaHres_I(
                 callback(x, k + 1, norm_aHr, *callback_args, **callback_kwargs)
 
     elif callback is None or callback_type != "norm_aHr":
-        # Solve triangular systems and find x_k
+        # Solve triangular systems and find xₖ
+        # Compute tₖ = Uₖ⁻¹ Ũₖ⁻¹ zₖ
         t = sp.linalg.solve_triangular(
             R[: (k + 1), : (k + 1)], z[: (k + 1)], check_finite=False
         )
         t = sp.linalg.solve_triangular(
             H[: (k + 1), : (k + 1)], t, check_finite=False, overwrite_b=True
         )
+        # Compute xₖ = Vₖ tₖ
         x = V[:, : (k + 1)] @ t
 
     return x, (k + 1, norm_aHr, breakdown)
@@ -461,34 +509,53 @@ def gmaHres_II(
     breakdown = "maximum number of iterations exceeded"
 
     for k in range(maxiter):
-        # Arnoldi method
+        # Continue the Arnoldi process in the AAᴴ-inner product
+        # AᴴAVₖ = Wₖ₊₁Hₖ₊₁.ₖ
+        #                     k
+        # hₖ₊₁.ₖvₖ₊₁ = Avₖ -  ∑ hⱼₖ vⱼ
+        #                    j=1
+        #
+        #                       k
+        # hₖ₊₁.ₖwₖ₊₁ = AᴴAvₖ -  ∑ hⱼₖ wⱼ
+        #                      j=1
         V[:, k + 1] = A @ V[:, k]
         W[:, k + 1] = A.conj().T @ V[:, k + 1]
         for j in range(k + 1):
             H[j, k] = np.vdot(W[:, j], W[:, k + 1])
             V[:, k + 1] -= H[j, k] * V[:, j]
             W[:, k + 1] -= H[j, k] * W[:, j]
-
         H[k + 1, k] = norm(W[:, k + 1])
+        # Detection of early termination
         if np.isclose(H[k + 1, k], 0, atol=arnoldi_tol):
             breakdown = "arnoldi_tolerance reached"
         else:
             V[:, k + 1] /= H[k + 1, k]
             W[:, k + 1] /= H[k + 1, k]
 
-        # QR factorization of $H_{k+1,k}$
+        # Update the QR factorization Hₖ₊₁.ₖ = Qₖ [ Uₖ ].
+        #                                         [ 0  ]
+        # Apply the previous Givens reflections to the last column
+        # [  u₁ₖ   ]       [  h₁₁   ]
+        # [   •    ] = Qₖᴴ [   •    ]
+        # [ uₖ₋₁.ₖ ]       [ hₖ₋₁.ₖ ]
+        # [  u°ₖₖ  ]       [  hₖₖ   ]
         for j in range(k):
             H[j : (j + 2), k] = (
                 np.array([[c[j], np.conj(s[j])], [s[j], -np.conj(c[j])]]).conj().T
                 @ H[j : (j + 2), k]
             )
 
+        # Compute and apply current Givens reflection
+        # [ c̅ₖ   s̅ₖ ] [  u°ₖₖ  ] = [ uₖₖ ]
+        # [ sₖ  -cₖ ] [ hₖ₊₁.ₖ ]   [  0  ]
         _c, _s, H[k, k] = get_givens_rot(H[k, k], H[k + 1, k])
         c.append(_c)
         s.append(_s)
         H[k + 1, k] = 0
 
-        # Computation of z_k
+        # Update zₖ = Qₖ₊₁ᴴ (α e₁)
+        # [ c̅ₖ   s̅ₖ ] [ ζ°ₖ ] = [  ζₖ   ]
+        # [ sₖ  -cₖ ] [  0  ]   [ ζ°ₖ₊₁ ]
         z[k : (k + 2)] = (
             np.array([[c[k], np.conj(s[k])], [s[k], -np.conj(c[k])]]).conj().T
             @ z[k : (k + 2)]
@@ -503,10 +570,12 @@ def gmaHres_II(
             if callback_type == "norm_aHr":
                 callback(k + 1, norm_aHr, *callback_args, **callback_kwargs)
             elif callback_type == "x":
-                # Solve triangular system and find x_k
+                # Solve triangular systems and find xₖ
+                # Compute tₖ = Uₖ⁻¹ zₖ
                 t = sp.linalg.solve_triangular(
                     H[: (k + 1), : (k + 1)], z[: (k + 1)], check_finite=False
                 )
+                # Compute xₖ = Vₖ tₖ
                 x = V[:, : (k + 1)] @ t
 
                 callback(x, k + 1, norm_aHr, *callback_args, **callback_kwargs)
@@ -517,19 +586,29 @@ def gmaHres_II(
 
     if breakdown == "arnoldi_tolerance reached":
         if np.isclose(H[k, k], 0, atol=arnoldi_tol):
-            # The problem is singular. This only happens when b does not have finite
-            # least squares grade with respect to A.
-            t = sp.linalg.solve_triangular(H[:k, :k], z[:k], check_finite=False)
-            s = sp.linalg.solve_triangular(H[:k, :k], H[:k, k], check_finite=False)
-            alpha = np.vdot(s, t) / (1 + np.real(np.vdot(s, s)))
-            t -= alpha * s
-            x = V[:, :k] @ t + alpha * V[:, k]
+            # The matrix Uₖ is singular. This only happens when b does not have finite
+            # least squares grade with respect to A. Among the minimizers in the Krylov
+            # subspace, we compute that with minimum norm.
+            #
+            # tₖ = [ p - γ q ]
+            #      [    γ    ]
+            # Here, with p = Uₖ₋₁⁻¹ zₖ₋₁, q = Uₖ₋₁⁻¹ u, u is the last column of Uₖ
+            # and γ = qᴴp / ( 1 + ‖q‖² )
+            p = sp.linalg.solve_triangular(H[:k, :k], z[:k], check_finite=False)
+            q = sp.linalg.solve_triangular(H[:k, :k], H[:k, k], check_finite=False)
+            gamma = np.vdot(q, p) / (1 + np.real(np.vdot(q, q)))
+            t = np.append(p - gamma * q, gamma)
+            # Compute xₖ = Vₖ tₖ
+            x = V[:, : (k + 1)] @ t
 
-            norm_aHr = np.abs(z[k])
+            norm_aHr = norm(z[k : (k + 2)])
         else:
+            # Solve triangular systems and find xₖ
+            # Compute tₖ = Uₖ⁻¹ zₖ
             t = sp.linalg.solve_triangular(
                 H[: (k + 1), : (k + 1)], z[: (k + 1)], check_finite=False
             )
+            # Compute xₖ = Vₖ tₖ
             x = V[:, : (k + 1)] @ t
 
             norm_aHr = 0.0
@@ -541,86 +620,12 @@ def gmaHres_II(
                 callback(x, k + 1, norm_aHr, *callback_args, **callback_kwargs)
 
     elif callback is None or callback_type != "x":
-        # Solve triangular system and find x_k
+        # Solve triangular systems and find xₖ
+        # Compute tₖ = Uₖ⁻¹ zₖ
         t = sp.linalg.solve_triangular(
             H[: (k + 1), : (k + 1)], z[: (k + 1)], check_finite=False
         )
+        # Compute xₖ = Vₖ tₖ
         x = V[:, : (k + 1)] @ t
 
     return x, (k + 1, norm_aHr, breakdown)
-
-
-if __name__ == "__main__":
-
-    def normal_equations_residual(x, k, norm_aHr, A, b):
-        # print(norm(A.conj().T @ (b - A @ x)))
-        print(k, norm_aHr, norm(A.T.conj() @ (b - A @ x)))
-        print(f"   x={str(x)}")
-
-    # A = np.random.rand(100, 100)
-    # A[99, :] = 0
-    # b = np.ones(100)
-    # x, info = gmaHres_I(
-    #     A,
-    #     b,
-    #     callback=normal_equations_residual,
-    #     callback_type="x",
-    #     callback_args=(A, b),
-    # )
-    # print(info[2])
-
-    A = np.array([[0.0, 1, 1], [0, 0, 1], [0, 0, 0]])
-    b = np.array([1, 1, 0])
-    x, info = gmaHres_I(
-        A,
-        b,
-        callback=normal_equations_residual,
-        callback_type="x",
-        callback_args=(A, b),
-    )
-    print(info)
-
-    # n = 3
-    # A = np.diag(np.linspace(1, n, n, endpoint=True))
-    # b = np.ones(n)
-    # gmaHres_II(A, b, 100, callback=normal_equations_residual, callback_args=(A, b))
-
-    # A = np.random.rand(100, 100)
-    # b = np.random.rand(100)
-
-    # x, info = gmaHres_I(
-    #     A,
-    #     b,
-    #     callback=normal_equations_residual,
-    #     callback_type="x",
-    #     callback_args=(A, b),
-    # )
-    # print(info)
-
-    # gmaHres(A, b, 100, normal_equations_residual, A, b)
-
-    # A = np.triu(np.ones((100, 100)))
-    # for j in range(99):
-    #   A[j+1, j] = 1
-    # b = np.zeros(100)
-    # b[0] = 1
-
-    # A = np.array([
-    #   [2, 4, 0, 0],
-    #   [0, 0, 0, 0],
-    #   [0, 0, 1, 3],
-    #   [0, 0, 0, 0]
-    # ])
-    # b = np.array([10, 20, 10, 30])
-
-    # print(gmaHres(A, b, 10000, normal_equations_residual, A, b))
-
-    # n = 100
-    # m = 10
-    # lambda_min = 0.01
-    # lambda_max = 100 # cond = 100_000
-    # eigenvalues = [lambda_min + (k/(n-1))**m*(lambda_max-lambda_min) for k in range(n)]
-    # A = np.diag(eigenvalues)
-    # b = np.ones(n)
-
-    # gmaHres(A, b, n, normal_equations_residual, A, b)
