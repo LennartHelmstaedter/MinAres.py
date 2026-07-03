@@ -3,6 +3,9 @@ from numpy.linalg import norm
 
 
 def get_givens_rot(a, b):
+    if a == 0 and b == 0:
+        return 1, 0, 0
+
     mag = norm((a, b))
     return a / mag, b / mag, mag
 
@@ -153,6 +156,7 @@ def MinAres(
     while norm_r_k > r_tol and norm_Ar_k > Ar_tol and k <= k_max:
         k += 1
 
+        # Update variables
         c_tilde_2k_3, c_tilde_2k_1 = c_tilde_2k_1, None
         c_tilde_2k_4, c_tilde_2k_2, c_tilde_2k = c_tilde_2k_2, c_tilde_2k, None
         s_tilde_2k_3, s_tilde_2k_1 = s_tilde_2k_1, None
