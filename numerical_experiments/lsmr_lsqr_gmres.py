@@ -1410,10 +1410,12 @@ def gmres(
                 callback(presid / bnrm2, *callback_args)
             elif callback_type == "x":
                 if np.isclose(h[col, col], 0, atol=rtol):
-                    y = solve_triangular(h[:col, :col], S[:col])
+                    y = solve_triangular(h[:col, :col], S[:col], trans="C", lower=True)
                     callback(x + y @ v[:col, :], presid, *callback_args)
                 else:
-                    y = solve_triangular(h[: col + 1, : col + 1], S[: col + 1])
+                    y = solve_triangular(
+                        h[: col + 1, : col + 1], S[: col + 1], trans="C", lower=True
+                    )
                     callback(x + y @ v[: col + 1, :], presid, *callback_args)
             # Legacy behavior
             if callback_type == "legacy" and inner_iter == maxiter:
