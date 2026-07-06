@@ -1,3 +1,36 @@
+"""Copyright (c) 2001-2002 Enthought, Inc. 2003, SciPy Developers.
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions
+are met:
+
+1. Redistributions of source code must retain the above copyright
+   notice, this list of conditions and the following disclaimer.
+
+2. Redistributions in binary form must reproduce the above
+   copyright notice, this list of conditions and the following
+   disclaimer in the documentation and/or other materials provided
+   with the distribution.
+
+3. Neither the name of the copyright holder nor the names of its
+   contributors may be used to endorse or promote products derived
+   from this software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+"AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
+OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
+LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+"""
+
+
 """
 ---------------------------------------------------------------------------------
 The following is essentially a copy of scipy's lsmr implementation.
@@ -1120,3 +1153,316 @@ def lsqr(
         print(" ")
 
     return x, istop, itn, r1norm, r2norm, anorm, acond, arnorm, xnorm, var
+
+
+def _get_atol_rtol(name, b_norm, atol=0.0, rtol=1e-5):
+    """
+    A helper function to handle tolerance normalization
+    """
+    if atol == "legacy" or atol is None or atol < 0:
+        msg = (
+            f"'scipy.sparse.linalg.{name}' called with invalid `atol`={atol}; "
+            "if set, `atol` must be a real, non-negative number."
+        )
+        raise ValueError(msg)
+
+    atol = max(float(atol), float(rtol) * float(b_norm))
+
+    return atol, rtol
+
+
+"""
+--------------------------------------------------------------------------------------
+The following is essentially a copy of scipy's gmres implementation.
+(https://github.com/scipy/scipy/blob/v1.17.0/scipy/sparse/linalg/_isolve/iterative.py)
+If the callback_type is "x", it makes the small adjustment of computing the iterate
+in every (inner) iteration and handing it as an input to the callback function.
+--------------------------------------------------------------------------------------
+"""
+import warnings
+import numpy as np
+from scipy.sparse.linalg._interface import LinearOperator
+from scipy.sparse.linalg._isolve.utils import make_system
+from scipy.linalg import get_lapack_funcs, solve_triangular
+
+
+def gmres(
+    A,
+    b,
+    x0=None,
+    *,
+    rtol=1e-5,
+    atol=0.0,
+    restart=None,
+    maxiter=None,
+    M=None,
+    callback=None,
+    callback_type=None,
+    callback_args=(),
+):
+    """
+    Solve ``Ax = b`` with the Generalized Minimal RESidual method.
+
+    Parameters
+    ----------
+    A : {sparse array, ndarray, LinearOperator}
+        The real or complex N-by-N matrix of the linear system.
+        Alternatively, `A` can be a linear operator which can
+        produce ``Ax`` using, e.g.,
+        ``scipy.sparse.linalg.LinearOperator``.
+    b : ndarray
+        Right hand side of the linear system. Has shape (N,) or (N,1).
+    x0 : ndarray
+        Starting guess for the solution (a vector of zeros by default).
+    atol, rtol : float
+        Parameters for the convergence test. For convergence,
+        ``norm(b - A @ x) <= max(rtol*norm(b), atol)`` should be satisfied.
+        The default is ``atol=0.`` and ``rtol=1e-5``.
+    restart : int, optional
+        Number of iterations between restarts. Larger values increase
+        iteration cost, but may be necessary for convergence.
+        If omitted, ``min(20, n)`` is used.
+    maxiter : int, optional
+        Maximum number of iterations (restart cycles).  Iteration will stop
+        after maxiter steps even if the specified tolerance has not been
+        achieved. See `callback_type`.
+    M : {sparse array, ndarray, LinearOperator}
+        Inverse of the preconditioner of `A`.  `M` should approximate the
+        inverse of `A` and be easy to solve for (see Notes).  Effective
+        preconditioning dramatically improves the rate of convergence,
+        which implies that fewer iterations are needed to reach a given
+        error tolerance.  By default, no preconditioner is used.
+        In this implementation, left preconditioning is used,
+        and the preconditioned residual is minimized. However, the final
+        convergence is tested with respect to the ``b - A @ x`` residual.
+    callback : function
+        User-supplied function to call after each iteration.  It is called
+        as ``callback(args)``, where ``args`` are selected by `callback_type`.
+    callback_type : {'x', 'pr_norm', 'legacy'}, optional
+        Callback function argument requested:
+          - ``x``: current iterate (ndarray), called on every iteration
+          - ``pr_norm``: relative (preconditioned) residual norm (float),
+            called on every inner iteration
+          - ``legacy`` (default): same as ``pr_norm``, but also changes the
+            meaning of `maxiter` to count inner iterations instead of restart
+            cycles.
+
+        This keyword has no effect if `callback` is not set.
+
+    Returns
+    -------
+    x : ndarray
+        The converged solution.
+    info : int
+        Provides convergence information:
+            0  : successful exit
+            >0 : convergence to tolerance not achieved, number of iterations
+
+    See Also
+    --------
+    LinearOperator
+
+    Notes
+    -----
+    A preconditioner, P, is chosen such that P is close to A but easy to solve
+    for. The preconditioner parameter required by this routine is
+    ``M = P^-1``. The inverse should preferably not be calculated
+    explicitly.  Rather, use the following template to produce M::
+
+      # Construct a linear operator that computes P^-1 @ x.
+      import scipy.sparse.linalg as spla
+      M_x = lambda x: spla.spsolve(P, x)
+      M = spla.LinearOperator((n, n), M_x)
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> from scipy.sparse import csc_array
+    >>> from scipy.sparse.linalg import gmres
+    >>> A = csc_array([[3, 2, 0], [1, -1, 0], [0, 5, 1]], dtype=float)
+    >>> b = np.array([2, 4, -1], dtype=float)
+    >>> x, exitCode = gmres(A, b, atol=1e-5)
+    >>> print(exitCode)            # 0 indicates successful convergence
+    0
+    >>> np.allclose(A.dot(x), b)
+    True
+    """
+    if callback is not None and callback_type is None:
+        # Warn about 'callback_type' semantic changes.
+        # Probably should be removed only in far future, Scipy 2.0 or so.
+        msg = (
+            "scipy.sparse.linalg.gmres called without specifying "
+            "`callback_type`. The default value will be changed in"
+            " a future release. For compatibility, specify a value "
+            "for `callback_type` explicitly, e.g., "
+            "``gmres(..., callback_type='pr_norm')``, or to retain the "
+            "old behavior ``gmres(..., callback_type='legacy')``"
+        )
+        warnings.warn(msg, category=DeprecationWarning, stacklevel=3)
+
+    if callback_type is None:
+        callback_type = "legacy"
+
+    if callback_type not in ("x", "pr_norm", "legacy"):
+        raise ValueError(f"Unknown callback_type: {callback_type!r}")
+
+    if callback is None:
+        callback_type = None
+
+    A, M, x, b = make_system(A, M, x0, b)
+    matvec = A.matvec
+    psolve = M.matvec
+    n = len(b)
+    bnrm2 = np.linalg.norm(b)
+
+    atol, _ = _get_atol_rtol("gmres", bnrm2, atol, rtol)
+
+    if bnrm2 == 0:
+        return b, 0
+
+    eps = np.finfo(x.dtype.char).eps
+
+    dotprod = np.vdot if np.iscomplexobj(x) else np.dot
+
+    if maxiter is None:
+        maxiter = n * 10
+
+    if restart is None:
+        restart = 20
+    restart = min(restart, n)
+
+    Mb_nrm2 = np.linalg.norm(psolve(b))
+
+    # ====================================================
+    # =========== Tolerance control from gh-8400 =========
+    # ====================================================
+    # Tolerance passed to GMRESREVCOM applies to the inner
+    # iteration and deals with the left-preconditioned
+    # residual.
+    ptol_max_factor = 1.0
+    ptol = Mb_nrm2 * min(ptol_max_factor, atol / bnrm2)
+    presid = 0.0
+    # ====================================================
+    lartg = get_lapack_funcs("lartg", dtype=x.dtype)
+
+    # allocate internal variables
+    v = np.empty([restart + 1, n], dtype=x.dtype)
+    h = np.zeros([restart, restart + 1], dtype=x.dtype)
+    givens = np.zeros([restart, 2], dtype=x.dtype)
+
+    # legacy iteration count
+    inner_iter = 0
+
+    for iteration in range(maxiter):
+        if iteration == 0:
+            r = b - matvec(x) if x.any() else b.copy()
+            if np.linalg.norm(r) < atol:  # Are we done?
+                return x, 0
+
+        v[0, :] = psolve(r)
+        tmp = np.linalg.norm(v[0, :])
+        v[0, :] *= 1 / tmp
+        # RHS of the Hessenberg problem
+        S = np.zeros(restart + 1, dtype=x.dtype)
+        S[0] = tmp
+
+        breakdown = False
+        for col in range(restart):
+            av = matvec(v[col, :])
+            w = psolve(av)
+
+            # Modified Gram-Schmidt
+            h0 = np.linalg.norm(w)
+            for k in range(col + 1):
+                tmp = dotprod(v[k, :], w)
+                h[col, k] = tmp
+                w -= tmp * v[k, :]
+
+            h1 = np.linalg.norm(w)
+            h[col, col + 1] = h1
+            v[col + 1, :] = w[:]
+
+            # Exact solution indicator
+            if h1 <= eps * h0:
+                h[col, col + 1] = 0
+                breakdown = True
+            else:
+                v[col + 1, :] *= 1 / h1
+
+            # apply past Givens rotations to current h column
+            for k in range(col):
+                c, s = givens[k, 0], givens[k, 1]
+                n0, n1 = h[col, [k, k + 1]]
+                h[col, [k, k + 1]] = [c * n0 + s * n1, -s.conj() * n0 + c * n1]
+
+            # get and apply current rotation to h and S
+            c, s, mag = lartg(h[col, col], h[col, col + 1])
+            givens[col, :] = [c, s]
+            h[col, [col, col + 1]] = mag, 0
+
+            # S[col+1] component is always 0
+            tmp = -np.conjugate(s) * S[col]
+            S[[col, col + 1]] = [c * S[col], tmp]
+            presid = np.abs(tmp)
+            inner_iter += 1
+
+            if callback_type in ("legacy", "pr_norm"):
+                callback(presid / bnrm2, *callback_args)
+            elif callback_type == "x":
+                if np.isclose(h[col, col], 0, atol=rtol):
+                    y = solve_triangular(h[:col, :col], S[:col])
+                    callback(x + y @ v[:col, :], presid, *callback_args)
+                else:
+                    y = solve_triangular(h[: col + 1, : col + 1], S[: col + 1])
+                    callback(x + y @ v[: col + 1, :], presid, *callback_args)
+            # Legacy behavior
+            if callback_type == "legacy" and inner_iter == maxiter:
+                break
+            if presid <= ptol or breakdown:
+                break
+
+        # Solve h(col, col) upper triangular system and allow pseudo-solve
+        # singular cases as in (but without the f2py copies):
+        # y = trsv(h[:col+1, :col+1].T, S[:col+1])
+
+        if h[col, col] == 0:
+            S[col] = 0
+
+        y = np.zeros([col + 1], dtype=x.dtype)
+        y[:] = S[: col + 1]
+        for k in range(col, 0, -1):
+            if y[k] != 0:
+                y[k] /= h[k, k]
+                tmp = y[k]
+                y[:k] -= tmp * h[k, :k]
+        if y[0] != 0:
+            y[0] /= h[0, 0]
+
+        x += y @ v[: col + 1, :]
+
+        r = b - matvec(x)
+        rnorm = np.linalg.norm(r)
+
+        # Legacy exit
+        if callback_type == "legacy" and inner_iter == maxiter:
+            return x, 0 if rnorm <= atol else maxiter
+
+        # if callback_type == "x":
+        #     callback(x)
+
+        if rnorm <= atol:
+            break
+        elif breakdown:
+            # Reached breakdown (= exact solution), but the external
+            # tolerance check failed. Bail out with failure.
+            break
+        elif presid <= ptol:
+            # Inner loop passed but outer didn't
+            ptol_max_factor = max(eps, 0.25 * ptol_max_factor)
+        else:
+            ptol_max_factor = min(1.0, 1.5 * ptol_max_factor)
+
+        ptol = presid * min(ptol_max_factor, atol / rnorm)
+
+    info = 0 if (rnorm <= atol) else maxiter
+    return x, info
