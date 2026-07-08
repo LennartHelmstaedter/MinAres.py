@@ -2,7 +2,6 @@ import numpy as np
 from numpy.linalg import norm
 import matplotlib.pyplot as plt
 import scipy.sparse as sps
-import scipy
 
 from MinAres import MinAres
 from numerical_experiments.lsmr_lsqr_gmres import lsmr
