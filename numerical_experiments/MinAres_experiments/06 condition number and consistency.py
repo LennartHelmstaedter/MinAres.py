@@ -12,11 +12,15 @@ plt.rcParams.update(
         "pgf.texsystem": "pdflatex",
         "text.usetex": True,
         "font.family": "serif",
+        "text.latex.preamble": """
+            \\usepackage{amsmath}
+            \\DeclareMathOperator{\\dist}{dist}
+        """,
     }
 )
 
 
-def append_cond_back_err(
+def append_cond_forw_err(
     x,
     k,
     T,
@@ -26,10 +30,12 @@ def append_cond_back_err(
     A,
     b,
     T_conds,
-    backward_errors,
+    forw_err,
 ):
     T_conds.append(np.linalg.cond(T))
-    backward_errors.append(optimal_backward_error_fro(A, b, x))
+
+    res = b - A @ x
+    forw_err.append(norm(res[:-1] / np.diagonal(A)[:-1]))
 
 
 n = 20
@@ -53,18 +59,18 @@ fig.subplots_adjust(wspace=0.3, left=0.1, right=0.95)
 
 
 T_conds_inconsistent = []
-backward_errors_inconsistent = []
+forw_err_inconsistent = []
 MinAres_TV(
     A,
     b_inconsistent,
     1e-13,
     1e-13,
-    callback=append_cond_back_err,
+    callback=append_cond_forw_err,
     callback_args=(
         A,
         b_inconsistent,
         T_conds_inconsistent,
-        backward_errors_inconsistent,
+        forw_err_inconsistent,
     ),
 )
 
@@ -75,22 +81,22 @@ ax1.semilogy(
     label="Inconsistent system",
 )
 ax2.semilogy(
-    np.arange(len(backward_errors_inconsistent)),
-    backward_errors_inconsistent / norm(A, ord="fro"),
+    np.arange(len(forw_err_inconsistent)),
+    forw_err_inconsistent / forw_err_inconsistent[0],
     "-",
     label="Inconsistent system",
 )
 
 
 T_conds_consistent = []
-backward_errors_consistent = []
+forw_err_consistent = []
 MinAres_TV(
     A,
     b_consistent,
     1e-13,
     1e-13,
-    callback=append_cond_back_err,
-    callback_args=(A, b_consistent, T_conds_consistent, backward_errors_consistent),
+    callback=append_cond_forw_err,
+    callback_args=(A, b_consistent, T_conds_consistent, forw_err_consistent),
 )
 
 ax1.semilogy(
@@ -100,8 +106,8 @@ ax1.semilogy(
     label="Consistent system",
 )
 ax2.semilogy(
-    np.arange(len(backward_errors_consistent)),
-    backward_errors_consistent / norm(A, ord="fro"),
+    np.arange(len(forw_err_consistent)),
+    forw_err_consistent / forw_err_inconsistent[0],
     "--",
     label="Consistent system",
 )
@@ -111,10 +117,10 @@ ax1.set_xlabel("$k$", loc="right")
 ax2.set_xlabel("$k$", loc="right")
 
 ax1.set_ylabel("$\\kappa(T_{k+2,k+1})$")
-ax2.set_ylabel("$\\Vert E_{\\min}\\Vert_F \\mathbin{/} \\Vert A\\Vert_F$")
+ax2.set_ylabel("$\\dist(x_k,\\mathcal{L}) \\mathbin{/} \\Vert A^\\dagger b\\Vert$")
 
 ax1.set_title("Conditioning of the projected matrix")
-ax2.set_title("Relative backward error")
+ax2.set_title("Relative forward error")
 
 ax1.legend()
 ax2.legend()
