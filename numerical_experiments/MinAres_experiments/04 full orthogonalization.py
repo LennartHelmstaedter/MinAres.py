@@ -4,7 +4,6 @@ import matplotlib.pyplot as plt
 
 from MinAres import MinAres
 from numerical_experiments.MinAres_adapted_versions import MinAres_full_ortho
-from numerical_experiments.util import optimal_backward_error_fro
 
 
 plt.rcParams.update(
@@ -12,26 +11,25 @@ plt.rcParams.update(
         "pgf.texsystem": "pdflatex",
         "text.usetex": True,
         "font.family": "serif",
+        "text.latex.preamble": """
+            \\usepackage{amsmath}
+            \\DeclareMathOperator{\\dist}{dist}
+        """,
     }
 )
 
 
-def append_residuals(
+def append_forw_err(
     x,
     k,
     norm_r_k,
     norm_Ar_k,
     A,
     b,
-    residual_norms,
-    Aresidual_norms,
-    back_errs,
+    forw_err,
 ):
     res = b - A @ x
-    Ares = A @ res
-    residual_norms.append(norm(res[:-1]))
-    Aresidual_norms.append(norm(Ares))
-    back_errs.append(optimal_backward_error_fro(A, b, x))
+    forw_err.append(norm(res[:-1] / np.diagonal(A)[:-1]))
 
 
 n = 25
@@ -56,100 +54,58 @@ b = np.ones(n + 1)
 norm_A_fro = norm(A, ord="fro")
 
 
-fig, (ax2, ax3) = plt.subplots(1, 2, figsize=(8, 4))
-fig.subplots_adjust(wspace=0.3, left=0.1, right=0.95)
+fig, ax = plt.subplots(1, 1, figsize=(4, 4))
+fig.subplots_adjust(left=0.2, right=0.95)
 
 
-residual_norms_minares = []
-Aresidual_norms_minares = []
-back_err_minares = []
+forw_err_minares = []
 MinAres(
     A,
     b,
     1e-13,
     1e-13,
     beta_tol=1e-5,
-    callback=append_residuals,
+    callback=append_forw_err,
     callback_args=(
         A,
         b,
-        residual_norms_minares,
-        Aresidual_norms_minares,
-        back_err_minares,
+        forw_err_minares,
     ),
 )
 
-
-# ax1.semilogy(
-#     np.arange(len(residual_norms_minares)),
-#     residual_norms_minares / residual_norms_minares[0],
-#     "-",
-#     markersize=3,
-#     label="\\textsc{MinAres}",
-# )
-ax2.semilogy(
-    np.arange(len(Aresidual_norms_minares[:-5])),
-    Aresidual_norms_minares[:-5] / Aresidual_norms_minares[0],
+ax.semilogy(
+    np.arange(len(forw_err_minares)),
+    forw_err_minares / forw_err_minares[0],
     "-",
-    markersize=3,
-    label="three-term recurrence",
-)
-ax3.semilogy(
-    np.arange(len(back_err_minares)),
-    back_err_minares / norm_A_fro,
-    "-",
-    label="three-term recurrence",
+    label="three-term\nrecurrence",
 )
 
 
-residual_norms_minares_full_ortho = []
-Aresidual_norms_minares_full_ortho = []
-back_err_minares_full_ortho = []
+forw_err_minares_full_ortho = []
 MinAres_full_ortho(
     A,
     b,
     1e-13,
     1e-13,
     beta_tol=1e-5,
-    callback=append_residuals,
+    callback=append_forw_err,
     callback_args=(
         A,
         b,
-        residual_norms_minares_full_ortho,
-        Aresidual_norms_minares_full_ortho,
-        back_err_minares_full_ortho,
+        forw_err_minares_full_ortho,
     ),
 )
 
-
-# ax1.semilogy(
-#     np.arange(len(residual_norms_minares_full_ortho)),
-#     residual_norms_minares_full_ortho / residual_norms_minares_full_ortho[0],
-#     "--",
-#     markersize=3,
-#     label="\\textsc{MinAres}*",
-# )
-ax2.semilogy(
-    np.arange(len(Aresidual_norms_minares_full_ortho[:-1])),
-    Aresidual_norms_minares_full_ortho[:-1] / Aresidual_norms_minares_full_ortho[0],
-    "--",
-    markersize=3,
-    label="double full\northogonalization",
-)
-ax3.semilogy(
-    np.arange(len(back_err_minares_full_ortho)),
-    back_err_minares_full_ortho / norm_A_fro,
+ax.semilogy(
+    np.arange(len(forw_err_minares_full_ortho)),
+    forw_err_minares_full_ortho / forw_err_minares_full_ortho[0],
     "--",
     label="double full\northogonalization",
 )
 
-ax2.set_xlabel("$k$", loc="right")
-ax3.set_xlabel("$k$", loc="right")
-# ax1.legend()
-ax2.legend()
-ax3.legend()
-ax2.set_ylabel("$\\Vert A_1r_k\\Vert \\mathbin{/} \\Vert A_1b_1\\Vert$")
-ax3.set_ylabel("$\\Vert E_{\\min}\\Vert_F \\mathbin{/} \\Vert A_1\\Vert_F$")
-ax2.set_title("Relative $A_1$-residual")
-ax3.set_title("Relative backward error")
+ax.set_xlabel("$k$", loc="right")
+ax.legend(loc="upper right")
+ax.set_ylabel("$\\dist(x_k,\\mathcal{L}_1) \\mathbin{/} \\Vert A_1^\\dagger b_1\\Vert$")
+ax.set_title("Relative forward error")
+
 plt.show()

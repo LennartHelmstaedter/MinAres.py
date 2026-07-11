@@ -208,7 +208,7 @@ ax.semilogy(
 # ax3.legend()
 
 ax.set_xlabel("$k$", loc="right")
-ax.set_ylabel("$\\dist(x_k,\\mathcal{L}) \\mathbin{/} \\Vert A^\\dagger b_i\\Vert$")
+ax.set_ylabel("$\\dist(x_k,\\mathcal{L}_i) \\mathbin{/} \\Vert A_i^\\dagger b_i\\Vert$")
 ax.set_title("Relative forward error")
 ax.legend()
 
