@@ -4,7 +4,6 @@ import matplotlib.pyplot as plt
 
 from MinAres import MinAres
 from numerical_experiments.MinAres_adapted_versions import MinAres_TV
-from numerical_experiments.util import optimal_backward_error_fro
 
 
 plt.rcParams.update(

@@ -4,7 +4,6 @@ import matplotlib.pyplot as plt
 
 from MinAres import MinAres
 from numerical_experiments.lsmr_lsqr_gmres import lsmr
-from numerical_experiments.util import optimal_backward_error_fro
 
 
 plt.rcParams.update(
