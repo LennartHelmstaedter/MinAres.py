@@ -81,8 +81,8 @@ MinAres(
 )
 
 
-fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(8, 4))
-fig.subplots_adjust(wspace=0.3, left=0.1, right=0.95)
+fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(7, 2.5))
+fig.subplots_adjust(wspace=0.3, left=0.1, right=0.975)
 
 
 ax1.semilogy(
@@ -95,18 +95,27 @@ ax1.semilogy(
     label="refined iterate",
 )
 
-ax1.set_ylabel("$\\dist(x_k,\\mathcal{L}) \\mathbin{/} \\Vert A^\\dagger b\\Vert$")
-ax1.set_xlabel("$k$", loc="right")
+ax1.set_ylabel("$\\dist(x_k,\\mathcal{L}) \\mathbin{/} \\Vert x^\\dagger\\Vert$")
 ax1.set_title("Relative forward error")
-ax1.legend(loc="lower left")
 
 
 ax2.semilogy(np.arange(len(dist)), dist, "-", label="normal iterate")
 ax2.semilogy(np.arange(len(dist_corr)), dist_corr, "--", label="refined iterate")
 
 ax2.set_ylabel("$\\Vert x_k-x^\\dagger\\Vert \\mathbin{/} \\Vert x^\\dagger\\Vert$")
-ax2.set_xlabel("$k$", loc="right")
-ax2.set_title("Relative distance to minimum-norm solution")
-ax2.legend(loc="lower left")
+ax2.set_title("Relative distance to minimum-norm solution M")
+
+
+for ax in (ax1, ax2):
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+    ax.set_xmargin(0.02)
+    ax.set_xlim(0, None)
+    ax.legend()
+    ax.text(1.02, 0, "$k$", transform=ax.transAxes, ha="left", va="center")
+
+
+ax1.set_ylim(None, 1.1)
+ax1.set_yticks([10 ** (-j) for j in range(0, 13, 3)])
 
 plt.show()

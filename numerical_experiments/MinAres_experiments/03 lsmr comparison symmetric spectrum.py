@@ -16,8 +16,8 @@ plt.rcParams.update(
 
 np.random.seed(1)
 
-fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(8, 4))
-fig.subplots_adjust(wspace=0.3, left=0.1, right=0.95)
+fig1, (ax1, ax2) = plt.subplots(1, 2, figsize=(7, 2.5))
+fig1.subplots_adjust(wspace=0.3, left=0.1, right=0.975)
 
 
 n = 40
@@ -103,8 +103,7 @@ lsmr(
 ax1.semilogy(
     np.arange(len(Aresidual_norms_lsmr_1)),
     Aresidual_norms_lsmr_1 / Aresidual_norms_lsmr_1[0],
-    ":",
-    markersize=3,
+    "--",
     label="\\textsc{Lsmr}",
 )
 
@@ -127,13 +126,10 @@ lsmr(
 ax2.semilogy(
     np.arange(len(Aresidual_norms_lsmr_2)),
     Aresidual_norms_lsmr_2 / Aresidual_norms_lsmr_2[0],
-    ":",
-    markersize=3,
+    "--",
     label="\\textsc{Lsmr}",
 )
 
-ax1.set_xlabel("$k$", loc="right")
-ax2.set_xlabel("$k$", loc="right")
 
 ax1.set_title("Relative $A_1$-Residual")
 ax2.set_title("Relative $A_2$-Residual")
@@ -141,6 +137,14 @@ ax2.set_title("Relative $A_2$-Residual")
 ax1.set_ylabel("$\\Vert A_1r_k\\Vert \\mathbin{/} \\Vert A_1b\\Vert$")
 ax2.set_ylabel("$\\Vert A_2r_k\\Vert \\mathbin{/} \\Vert A_2b\\Vert$")
 
-ax1.legend()
-ax2.legend()
+for ax in (ax1, ax2):
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+    ax.set_xmargin(0.02)
+    ax.set_xlim(0, None)
+    ax.set_ylim(None, 1.1)
+    ax.legend()
+    ax.text(1.02, 0, "$k$", transform=ax.transAxes, ha="left", va="center")
+    ax.set_yticks([10 ** (-j) for j in range(0, 16, 3)])
+
 plt.show()

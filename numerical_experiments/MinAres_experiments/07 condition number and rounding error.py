@@ -48,15 +48,15 @@ for eps in beta_params:
     cond_TT.append(np.linalg.cond(T) * np.linalg.cond(T[:-1, :-1]))
     diff.append(norm(x_comp - x_svd) / norm(x_svd))
 
-fig1, ax = plt.subplots(1, 1, figsize=(4, 4))
-fig1.subplots_adjust(left=0.2, right=0.95)
+fig1, ax = plt.subplots(1, 1, figsize=(3.5, 3))
+fig1.subplots_adjust(left=0.17, right=0.95, bottom=0.16)
 ax.loglog(beta_params, cond_T, ".")
 ax.set_xlabel("$\\Vert\\mathrm{P}_{\\mathcal{N}(A)}b\\Vert$")
 ax.set_ylabel("$\\kappa(T_{37,36})$")
 ax.set_title("Conditioning factor")
 
-fig2, (ax1, ax2) = plt.subplots(1, 2, figsize=(8, 4))
-fig2.subplots_adjust(wspace=0.4, left=0.13, right=0.95)
+fig2, (ax1, ax2) = plt.subplots(1, 2, figsize=(7, 3))
+fig2.subplots_adjust(wspace=0.45, left=0.12, right=0.98, bottom=0.16, top=0.85)
 
 ax1.loglog(cond_TT, diff, ".")
 ax2.loglog(cond_TT, [d / c for (d, c) in zip(diff, cond_TT)], ".")
@@ -79,5 +79,13 @@ ax2.set_ylabel(
     "\\kappa(T_{38,37})\\kappa(T_{37,36})$"
 )
 ax2.set_title("Quotient of rounding error\nestimate and conditioning factor")
+
+
+for axs in (ax, ax1, ax2):
+    axs.spines["top"].set_visible(False)
+    axs.spines["right"].set_visible(False)
+
+ax.set_yticks([10**j for j in range(3, 15, 2)])
+
 
 plt.show()

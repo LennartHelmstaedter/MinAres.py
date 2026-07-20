@@ -54,8 +54,8 @@ b = np.ones(n + 1)
 norm_A_fro = norm(A, ord="fro")
 
 
-fig, ax = plt.subplots(1, 1, figsize=(4, 4))
-fig.subplots_adjust(left=0.2, right=0.95)
+fig, ax = plt.subplots(1, 1, figsize=(4, 2.5))
+fig.subplots_adjust(left=0.175, right=0.83125)
 
 
 forw_err_minares = []
@@ -103,9 +103,20 @@ ax.semilogy(
     label="double full\northogonalization",
 )
 
-ax.set_xlabel("$k$", loc="right")
-ax.legend(loc="upper right")
+
 ax.set_ylabel("$\\dist(x_k,\\mathcal{L}_1) \\mathbin{/} \\Vert A_1^\\dagger b_1\\Vert$")
 ax.set_title("Relative forward error")
+
+
+ax.spines["top"].set_visible(False)
+ax.spines["right"].set_visible(False)
+ax.set_xmargin(0.02)
+ax.set_xlim(0, None)
+ax.set_ylim(None, 1.1)
+ax.legend(
+    loc="upper right",
+    bbox_to_anchor=(1.25, 1),
+)
+ax.text(1.02, 0, "$k$", transform=ax.transAxes, ha="left", va="center")
 
 plt.show()

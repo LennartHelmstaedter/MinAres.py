@@ -53,8 +53,9 @@ b_inconsistent[n] = 1
 b_consistent = np.ones(n + 1)
 b_consistent[n] = 0
 
-fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(8, 4))
-fig.subplots_adjust(wspace=0.3, left=0.1, right=0.95)
+
+fig1, (ax1, ax2) = plt.subplots(1, 2, figsize=(7, 2.5))
+fig1.subplots_adjust(wspace=0.3, left=0.1, right=0.975)
 
 
 T_conds_inconsistent = []
@@ -112,16 +113,22 @@ ax2.semilogy(
 )
 
 
-ax1.set_xlabel("$k$", loc="right")
-ax2.set_xlabel("$k$", loc="right")
-
 ax1.set_ylabel("$\\kappa(T_{k+2,k+1})$")
 ax2.set_ylabel("$\\dist(x_k,\\mathcal{L}) \\mathbin{/} \\Vert A^\\dagger b\\Vert$")
 
 ax1.set_title("Conditioning of the projected matrix")
 ax2.set_title("Relative forward error")
 
-ax1.legend()
-ax2.legend()
+
+for ax in (ax1, ax2):
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+    ax.set_xmargin(0.02)
+    ax.set_xlim(0, None)
+    ax.legend()
+    ax.text(1.02, 0, "$k$", transform=ax.transAxes, ha="left", va="center")
+
+ax1.set_ylim(1, None)
+ax2.set_ylim(None, 1.1)
 
 plt.show()

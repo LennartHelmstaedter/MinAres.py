@@ -42,16 +42,12 @@ def append_stats(
     forw_err.append(norm(res[:-1] / np.diagonal(A)[:-1]))
 
 
-fig1, (ax1, ax2) = plt.subplots(1, 2, figsize=(7, 3.5))
-fig1.subplots_adjust(wspace=0.3, left=0.1, right=0.98)
-fig1, (ax3, ax4) = plt.subplots(1, 2, figsize=(7, 3.5))
-fig1.subplots_adjust(wspace=0.3, left=0.1, right=0.98)
+fig1, (ax1, ax2) = plt.subplots(1, 2, figsize=(7, 2.5))
+fig1.subplots_adjust(wspace=0.3, left=0.1, right=0.975)
+fig1, (ax3, ax4) = plt.subplots(1, 2, figsize=(7, 2.5))
+fig1.subplots_adjust(wspace=0.3, left=0.1, right=0.975)
 
 
-ax1.set_xlabel("$k$", loc="right")
-ax2.set_xlabel("$k$", loc="right")
-ax3.set_xlabel("$k$", loc="right")
-ax4.set_xlabel("$k$", loc="right")
 ax1.set_title("Relative projected residual")
 ax2.set_title("Relative $A$-residual")
 ax3.set_title("Relative backward error")
@@ -292,10 +288,14 @@ ax4.semilogy(
 )
 
 
-ax1.legend()
-ax2.legend()
-ax3.legend()
-ax4.legend()
+for ax in (ax1, ax2, ax3, ax4):
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+    ax.set_xmargin(0.02)
+    ax.set_xlim(0, None)
+    ax.set_ylim(None, 1.1)
+    ax.legend()
+    ax.text(1.02, 0, "$k$", transform=ax.transAxes, ha="left", va="center")
 
 
 plt.show()
