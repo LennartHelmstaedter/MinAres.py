@@ -74,6 +74,7 @@ def lsmr(
     show=False,
     x0=None,
     callback=None,
+    callback_args=(),
 ):
     """Iterative solver for least-squares problems.
 
@@ -418,7 +419,7 @@ def lsmr(
         h += v
 
         if callback is not None:
-            callback(x)
+            callback(x, *callback_args)
 
         # Estimate of ||r||.
 
@@ -656,6 +657,7 @@ def lsqr(
     calc_var=False,
     x0=None,
     callback=None,
+    callback_args=(),
 ):
     """Find the least-squares solution to a large, sparse, linear system
     of equations.
@@ -1034,7 +1036,7 @@ def lsqr(
         ddnorm = ddnorm + np.linalg.norm(dk) ** 2
 
         if callback is not None:
-            callback(x)
+            callback(x, *callback_args)
 
         if calc_var:
             var = var + dk**2
