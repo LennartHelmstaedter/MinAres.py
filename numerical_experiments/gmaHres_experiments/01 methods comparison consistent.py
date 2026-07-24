@@ -7,6 +7,10 @@ from gmaHres import gmaHres_I, gmaHres_II
 from MinAres import MinAres
 from numerical_experiments.lsmr_lsqr_gmres import lsmr, lsqr, gmres
 
+"""
+CAUTION: Running this file may take multiple minutes.
+"""
+
 
 np.random.seed(0)
 
