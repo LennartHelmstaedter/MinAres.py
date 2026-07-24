@@ -68,6 +68,9 @@ dist_corr = []
 MinAres(
     A,
     b,
+    1e-13,
+    1e-13,
+    k_max=4 * n,
     callback=append_errors,
     callback_args=(
         A,
@@ -95,14 +98,14 @@ ax1.semilogy(
     label="refined iterate",
 )
 
-ax1.set_ylabel("$\\dist(x_k,\\mathcal{L}) \\mathbin{/} \\Vert x^\\dagger\\Vert$")
+ax1.set_ylabel("$\\dist(x_k,\\mathcal{L}) \\mathbin{/} \\Vert A^\\dagger b\\Vert$")
 ax1.set_title("Relative forward error")
 
 
 ax2.semilogy(np.arange(len(dist)), dist, "-", label="normal iterate")
 ax2.semilogy(np.arange(len(dist_corr)), dist_corr, "--", label="refined iterate")
 
-ax2.set_ylabel("$\\Vert x_k-x^\\dagger\\Vert \\mathbin{/} \\Vert x^\\dagger\\Vert$")
+ax2.set_ylabel("$\\Vert x_k-A^\\dagger b\\Vert \\mathbin{/} \\Vert A^\\dagger b\\Vert$")
 ax2.set_title("Relative distance to minimum-norm solution M")
 
 
@@ -111,11 +114,13 @@ for ax in (ax1, ax2):
     ax.spines["right"].set_visible(False)
     ax.set_xmargin(0.02)
     ax.set_xlim(0, None)
-    ax.legend()
     ax.text(1.02, 0, "$k$", transform=ax.transAxes, ha="left", va="center")
-
 
 ax1.set_ylim(None, 1.1)
 ax1.set_yticks([10 ** (-j) for j in range(0, 13, 3)])
+ax1.legend()
+
+ax2.set_yticks([10 ** (-j) for j in range(0, 13, 3)])
+
 
 plt.show()

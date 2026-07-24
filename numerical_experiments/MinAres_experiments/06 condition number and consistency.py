@@ -125,10 +125,10 @@ for ax in (ax1, ax2):
     ax.spines["right"].set_visible(False)
     ax.set_xmargin(0.02)
     ax.set_xlim(0, None)
-    ax.legend()
     ax.text(1.02, 0, "$k$", transform=ax.transAxes, ha="left", va="center")
 
 ax1.set_ylim(1, None)
 ax2.set_ylim(None, 1.1)
+ax1.legend()
 
 plt.show()

@@ -283,7 +283,8 @@ for ax in (ax1, ax2, ax3, ax4):
     ax.set_xmargin(0.02)
     ax.set_xlim(0, None)
     ax.set_ylim(None, 1.1)
-    ax.legend()
     ax.text(1.02, 0, "$k$", transform=ax.transAxes, ha="left", va="center")
+
+ax1.legend()
 
 plt.show()

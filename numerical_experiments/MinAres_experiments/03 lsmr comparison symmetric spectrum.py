@@ -143,8 +143,9 @@ for ax in (ax1, ax2):
     ax.set_xmargin(0.02)
     ax.set_xlim(0, None)
     ax.set_ylim(None, 1.1)
-    ax.legend()
     ax.text(1.02, 0, "$k$", transform=ax.transAxes, ha="left", va="center")
     ax.set_yticks([10 ** (-j) for j in range(0, 16, 3)])
+
+ax1.legend()
 
 plt.show()
