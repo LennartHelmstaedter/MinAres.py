@@ -133,7 +133,7 @@ def gmaHres_I(
     beta = norm(b)
     V[:, 0] = b / beta
 
-    W[:, 0] = A.conj().T @ V[:, 0]
+    W[:, 0] = (V[:, 0].conj() @ A).conj()
     R[0, 0] = norm(W[:, 0])
     W[:, 0] /= R[0, 0]
 
@@ -199,7 +199,7 @@ def gmaHres_I(
         #                         k
         # rₖ₊₁.₊₁wₖ₊₁ = Aᴴvₖ₊₁ -  ∑ rⱼₖ wⱼ
         #                        j=1
-        W[:, k + 1] = A.conj().T @ V[:, k + 1]
+        W[:, k + 1] = (V[:, k + 1].conj() @ A).conj()
         for j in range(k + 1):
             R[j, k + 1] = np.vdot(W[:, j], W[:, k + 1])
             W[:, k + 1] -= R[j, k + 1] * W[:, j]
@@ -482,7 +482,7 @@ def gmaHres_II(
     z = np.zeros(maxiter + 1, dtype=dtype)
     l = np.inf
 
-    W[:, 0] = A.conj().T @ b
+    W[:, 0] = (b.conj() @ A).conj()
     alpha = norm(W[:, 0])
     W[:, 0] /= alpha
     V[:, 0] = b / alpha
@@ -519,7 +519,7 @@ def gmaHres_II(
         # hₖ₊₁.ₖwₖ₊₁ = AᴴAvₖ -  ∑ hⱼₖ wⱼ
         #                      j=1
         V[:, k + 1] = A @ V[:, k]
-        W[:, k + 1] = A.conj().T @ V[:, k + 1]
+        W[:, k + 1] = (V[:, k + 1].conj() @ A).conj()
         for j in range(k + 1):
             H[j, k] = np.vdot(W[:, j], W[:, k + 1])
             V[:, k + 1] -= H[j, k] * V[:, j]
